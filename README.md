@@ -19,7 +19,8 @@ Alice doesn’t rely on your camera’s AF system. It measures distance with its
 
 ## Demo
 ![Demo](res/Demo.gif)
-🔗 https://youtu.be/VIDEO_ID
+
+🔗 [Video](https://www.bilibili.com/video/BV1Z3UDBoE55)
 
 ## Hardware Requirements
 
@@ -47,7 +48,7 @@ Automatic face detection and tracking. When multiple faces are present, tap to s
 
 ## Quick Start
 
-1. Download the APK and `firmware.hex` from the [Releases](https://github.com/Stry233/Vanta/releases) page
+1. Download the APK and `firmware.hex` from the [Releases](https://github.com/Stry233/alice/releases) page
 2. Flash the firmware to your nRF52840 dongle
 3. Install the APK on your phone
 4. Connect your devices and calibrate your lens
