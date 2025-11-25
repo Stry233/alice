@@ -23,7 +23,7 @@ The Tilta motor must be configured to operate on IEEE 802.15.4 channel 12. This 
 
 ## 2. App Installation
 
-1. Download `alice.apk` from the [Releases](https://github.com/Stry233/Vanta/releases) page
+1. Download `alice.apk` from the [Releases](https://github.com/Stry233/alice/releases) page
 2. Install the APK on your phone (enable "Install from unknown sources" if prompted)
 3. Launch Alice and complete the onboarding screens
 4. Grant permissions when requested (Camera, USB access)
@@ -46,7 +46,7 @@ Install these tools on your computer:
 
 ### Flashing Steps
 
-1. Download `firmware.hex` from the [Releases](https://github.com/Stry233/Vanta/releases) page
+1. Download `firmware.hex` from the [Releases](https://github.com/Stry233/alice/releases) page
 2. Open nRF Connect for Desktop > **Programmer**
 3. Insert the nRF52840 dongle
 4. Press the **Reset** button on the dongle to enter bootloader mode (LED should pulse)
