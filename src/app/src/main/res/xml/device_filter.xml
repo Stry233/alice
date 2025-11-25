@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- UVC Cameras -->
+    <usb-device class="14" subclass="1" protocol="0" />
+    <usb-device class="14" subclass="2" protocol="0" />
+
+
+    <!-- Generic CDC ACM devices (for motor controller) -->
+    <usb-device class="2" subclass="0" protocol="0" />
+    <usb-device vendor-id="12259" product-id="256" />
+    <!-- VID: 0x2FE3 = 12259, PID: 0x0100 = 256 -->
+
+    <!-- Intel RealSense cameras -->
+    <!-- D435 -->
+    <usb-device vendor-id="32902" product-id="2823" />
+    <!-- D415 -->
+    <usb-device vendor-id="32902" product-id="2874" />
+    <!-- D435i -->
+    <usb-device vendor-id="32902" product-id="2908" />
+    <!-- D435f -->
+    <usb-device vendor-id="32902" product-id="2916" />
+    <!-- D455 -->
+    <usb-device vendor-id="32902" product-id="2769" />
+    <!-- D405 -->
+    <usb-device vendor-id="32902" product-id="2770" />
+    <!-- D455 alternative -->
+    <usb-device vendor-id="32902" product-id="2898" />
+    <!-- D435 alternative -->
+    <usb-device vendor-id="32902" product-id="2877" />
+    <!-- D435i alternative -->
+    <usb-device vendor-id="32902" product-id="2814" />
+    <!-- D435f alternative -->
+    <usb-device vendor-id="32902" product-id="2907" />
+</resources>
