@@ -36,6 +36,10 @@ class AutofocusCoordinator(
      * Initialize all autofocus integration logic
      */
     fun initialize() {
+        // Safety: Always start in MANUAL mode on app startup
+        // This prevents dangerous autofocus activation without user confirmation
+        resetFocusModeToManual("App startup")
+
         setupDeviceReadinessMonitoring()
         setupDepthDataProcessing()
         setupMotorCommandApplication()
@@ -45,7 +49,25 @@ class AutofocusCoordinator(
     }
 
     /**
-     * Monitor device connection states and update autofocus controller
+     * Reset focus mode to MANUAL for safety.
+     * Called on app startup and device reconnection to prevent unexpected autofocus behavior.
+     */
+    private fun resetFocusModeToManual(reason: String) {
+        val currentMode = settingsManager.autofocusMode.value
+        if (currentMode != FocusMode.MANUAL.name) {
+            settingsManager.setAutofocusMode(FocusMode.MANUAL.name)
+            settingsManager.setAutofocusEnabled(false)
+            onLogMessage("AUTOFOCUS", "Focus mode reset to MANUAL ($reason)")
+        }
+    }
+
+    // Track previous device readiness state for reconnection detection
+    private var wasMotorReady = false
+    private var wasRealSenseReady = false
+
+    /**
+     * Monitor device connection states and update autofocus controller.
+     * Also resets focus mode to MANUAL when core devices reconnect for safety.
      */
     private fun setupDeviceReadinessMonitoring() {
         scope.launch {
@@ -59,6 +81,22 @@ class AutofocusCoordinator(
                         realSenseState is ConnectionState.Active
                 Pair(motorReady, realSenseReady)
             }.collect { (motorReady, realSenseReady) ->
+                // Detect device reconnection and reset to MANUAL mode for safety
+                // This ensures autofocus doesn't unexpectedly activate after device reconnection
+                val motorReconnected = motorReady && !wasMotorReady
+                val realSenseReconnected = realSenseReady && !wasRealSenseReady
+
+                if (motorReconnected) {
+                    resetFocusModeToManual("Motor dongle reconnected")
+                }
+                if (realSenseReconnected) {
+                    resetFocusModeToManual("RealSense camera reconnected")
+                }
+
+                // Update tracking state
+                wasMotorReady = motorReady
+                wasRealSenseReady = realSenseReady
+
                 autofocusController.updateDeviceReadiness(motorReady, realSenseReady)
             }
         }

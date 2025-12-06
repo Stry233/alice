@@ -422,7 +422,8 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         autofocusController.clearMapping()
         settingsManager.setAutofocusEnabled(false)
         settingsManager.setAutofocusMappingName("")
-        log(LogCategory.AUTOFOCUS, "Mapping cleared", LogLevel.INFO)
+        settingsManager.setAutofocusMode(FocusMode.MANUAL.name)
+        log(LogCategory.AUTOFOCUS, "Mapping cleared, focus mode reset to MANUAL", LogLevel.INFO)
     }
 
     // Export current mapping
