@@ -184,9 +184,11 @@ class AutofocusController(
 
         stopContinuousFocus()
         stopSingleFocus()
+        stopFaceTracking()
         _state.update {
             it.copy(
                 mapping = null,
+                mode = FocusMode.MANUAL,
                 isEnabled = false,
                 isActivelyFocusing = false,
                 error = null
@@ -197,6 +199,7 @@ class AutofocusController(
 
         scope.launch {
             _events.emit(AutofocusEvent.MappingCleared)
+            _events.emit(AutofocusEvent.ModeChanged(FocusMode.MANUAL))
         }
     }
 
