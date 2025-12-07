@@ -1,5 +1,6 @@
 package com.selkacraft.alice.coordination
 
+import android.content.Context
 import com.selkacraft.alice.comm.autofocus.*
 import com.selkacraft.alice.comm.core.ConnectionState
 import com.selkacraft.alice.comm.motor.MotorControlManager
@@ -14,6 +15,7 @@ import kotlinx.coroutines.launch
  * This class encapsulates all the integration logic for the autofocus system.
  */
 class AutofocusCoordinator(
+    private val context: Context,
     private val autofocusController: AutofocusController,
     private val motorManager: MotorControlManager,
     private val realSenseManager: RealSenseManager,
@@ -23,7 +25,7 @@ class AutofocusCoordinator(
     private val onLogMessage: (String, String) -> Unit  // (category, message)
 ) {
     // Face detection processor for FACE_TRACKING mode
-    private val faceDetectionProcessor = FaceDetectionProcessor(scope)
+    private val faceDetectionProcessor = FaceDetectionProcessor(context, scope, onLogMessage)
 
     // Expose autofocus state
     val state: StateFlow<AutofocusState> = autofocusController.state
@@ -39,6 +41,20 @@ class AutofocusCoordinator(
         // Safety: Always start in MANUAL mode on app startup
         // This prevents dangerous autofocus activation without user confirmation
         resetFocusModeToManual("App startup")
+
+        // Initialize enhanced face detection processor (ONNX + ML Kit)
+        scope.launch {
+            val result = faceDetectionProcessor.initialize()
+            if (result.isSuccess) {
+                if (faceDetectionProcessor.isOnnxAvailable()) {
+                    onLogMessage("FACE_TRACKING", "YOLO Eye AF ready")
+                } else {
+                    onLogMessage("FACE_TRACKING", "ML Kit fallback (no YOLO model)")
+                }
+            } else {
+                onLogMessage("FACE_TRACKING", "Face detector init failed")
+            }
+        }
 
         setupDeviceReadinessMonitoring()
         setupDepthDataProcessing()
@@ -197,7 +213,8 @@ class AutofocusCoordinator(
     }
 
     /**
-     * Setup face detection processing pipeline
+     * Setup face detection processing pipeline with eye tracking.
+     * Uses the enhanced focus point (eye position when available, face center otherwise).
      */
     private fun setupFaceDetectionProcessing() {
         // Process color frames for face detection
@@ -214,15 +231,21 @@ class AutofocusCoordinator(
             faceDetectionProcessor.faceDetectionState.collect { faceState ->
                 autofocusController.updateFaceDetectionState(faceState)
 
-                // Update RealSense measurement position based on selected face
+                // Update RealSense measurement position based on selected face's focus point
                 if (autofocusController.state.value.mode == FocusMode.FACE_TRACKING) {
                     val targetFace = faceState.defaultFocusTarget
                     if (targetFace != null) {
-                        // Set measurement position to face center
-                        realSenseManager.setMeasurementPosition(
-                            targetFace.centerPoint.x,
-                            targetFace.centerPoint.y
-                        )
+                        // Use the focus point (eye when available, face center otherwise)
+                        val focusPoint = targetFace.getFocusPointFor(faceState.focusTargetPreference)
+                        realSenseManager.setMeasurementPosition(focusPoint.x, focusPoint.y)
+
+                        // Log tracking state changes for debugging
+                        val trackingInfo = when (targetFace.trackingState) {
+                            TrackingState.EYE_LOCKED -> "Eye locked"
+                            TrackingState.FACE_ONLY -> "Face tracking"
+                            TrackingState.PREDICTED -> "Predicting position"
+                            TrackingState.LOST -> "Subject lost"
+                        }
                     }
                 }
             }

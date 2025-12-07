@@ -418,16 +418,7 @@ private fun DraggableDepthPreview(
                 contentScale = ContentScale.Fit
             )
 
-            if (autofocusMode == "FACE_TRACKING") {
-                FaceDetectionOverlay(
-                    faceDetectionState = faceDetectionState,
-                    imageWidth = bitmap.width,
-                    imageHeight = bitmap.height,
-                    onFaceTap = onFaceTap,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
+            // Drag/tap handler Box for non-FACE_TRACKING modes
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -573,6 +564,17 @@ private fun DraggableDepthPreview(
                         .padding(4.dp)
                         .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+
+            // Face detection overlay - rendered on top for tap handling
+            if (autofocusMode == "FACE_TRACKING") {
+                FaceDetectionOverlay(
+                    faceDetectionState = faceDetectionState,
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    onFaceTap = onFaceTap,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }
