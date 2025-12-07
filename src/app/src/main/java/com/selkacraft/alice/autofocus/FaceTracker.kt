@@ -5,9 +5,20 @@ import android.graphics.Rect
 import kotlin.math.sqrt
 
 /**
- * Tracks faces across frames and assigns persistent colors to each face.
- * Uses ML Kit tracking IDs as primary identifier, with fallback to spatial tracking.
+ * Legacy face tracker - assigns persistent colors to each face.
+ *
+ * @deprecated This class is superseded by [SubjectTracker] which provides:
+ * - Kalman filter-based position tracking and prediction
+ * - Better occlusion handling with position prediction
+ * - Face scoring for priority selection
+ * - Eye position tracking integration
+ *
+ * Use [SubjectTracker] for new code. This class is kept for backward compatibility.
  */
+@Deprecated(
+    message = "Use SubjectTracker instead for enhanced tracking with Kalman filter and eye support",
+    replaceWith = ReplaceWith("SubjectTracker")
+)
 class FaceTracker {
 
     // Color palette for face bounding boxes (distinct colors for easy differentiation)

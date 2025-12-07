@@ -1,5 +1,6 @@
 package com.selkacraft.alice.comm.autofocus
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.Rect
 import android.util.Log
@@ -8,6 +9,7 @@ import com.google.mlkit.vision.face.Face
 import com.google.mlkit.vision.face.FaceDetection
 import com.google.mlkit.vision.face.FaceDetector
 import com.google.mlkit.vision.face.FaceDetectorOptions
+import com.google.mlkit.vision.face.FaceLandmark
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,40 +22,44 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Processes frames for face detection using ML Kit.
- * Provides real-time face detection with tracking IDs and bounding boxes.
+ * Processes frames for face detection
+ *
+ * Architecture:
+ * 1. Primary: ONNX YOLO-face detector for robust face detection at all distances
+ * 2. Secondary: ML Kit for eye landmark refinement (when YOLO landmarks insufficient)
+ * 3. SubjectTracker: Kalman filter-based tracking for smooth, predictive tracking
+ *
  */
 class FaceDetectionProcessor(
-    private val scope: CoroutineScope
+    private val context: Context,
+    private val scope: CoroutineScope,
+    private val onLogMessage: ((String, String) -> Unit)? = null
 ) {
     private val tag = "FaceDetectionProcessor"
 
-    // ML Kit Face Detector with accuracy optimized settings for stability
-    private val detectorOptions = FaceDetectorOptions.Builder()
-        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE) // Use accurate mode for stability
-        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_NONE) // Disabled for speed
-        .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)   // Disabled for speed
-        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE) // Disabled for speed
-        .setMinFaceSize(0.25f) // Minimum face size (25% of image) - larger for stability and fewer false positives
-        .enableTracking() // Enable face tracking across frames
+    private fun log(message: String) {
+        Log.d(tag, message)
+        onLogMessage?.invoke("FACE_TRACKING", message)
+    }
+
+    // ONNX-based face detector (primary)
+    private val onnxDetector = OnnxFaceDetector(context)
+    private var onnxInitialized = false
+
+    // ML Kit Face Detector (fallback and eye landmark refinement)
+    private val mlKitOptions = FaceDetectorOptions.Builder()
+        .setPerformanceMode(FaceDetectorOptions.PERFORMANCE_MODE_ACCURATE)
+        .setLandmarkMode(FaceDetectorOptions.LANDMARK_MODE_ALL)  // Enable landmarks for eyes
+        .setContourMode(FaceDetectorOptions.CONTOUR_MODE_NONE)
+        .setClassificationMode(FaceDetectorOptions.CLASSIFICATION_MODE_NONE)
+        .setMinFaceSize(0.15f)  // Lower threshold since ONNX is primary
+        .enableTracking()
         .build()
 
-    private val detector: FaceDetector = FaceDetection.getClient(detectorOptions)
+    private val mlKitDetector: FaceDetector = FaceDetection.getClient(mlKitOptions)
 
-    // Face tracker for maintaining face identities and colors
-    private val faceTracker = FaceTracker()
-
-    // Smoothing for bounding boxes (exponential moving average)
-    private val boundingBoxSmoothing = mutableMapOf<Int, Rect>()
-    private val smoothingFactor = 0.15f // Lower = smoother, more stable (reduced from 0.3)
-
-    // Face stability tracking - require faces to be detected for N frames before showing
-    private val faceStabilityFrames = mutableMapOf<Int, Int>() // trackingId -> consecutive frames seen
-    private val requiredStabilityFrames = 3 // Require 3 consecutive frames for new faces
-
-    // Track last seen frame for each face to prevent ID flickering
-    private val faceLastSeenFrame = mutableMapOf<Int, Long>()
-    private val faceRetentionFrames = 5 // Keep face for 5 frames even if not detected
+    // Subject tracker with Kalman filter
+    private val subjectTracker = SubjectTracker()
 
     // Processing state
     private val _faceDetectionState = MutableStateFlow(FaceDetectionState())
@@ -63,6 +69,7 @@ class FaceDetectionProcessor(
     private var frameCount = 0L
     private var totalProcessingTimeMs = 0L
     private var lastFrameTimestamp = 0L
+    private var framesWithEyes = 0L
 
     // Mutex to prevent concurrent processing
     private val processingMutex = Mutex()
@@ -70,8 +77,42 @@ class FaceDetectionProcessor(
     // Processing job
     private var processingJob: Job? = null
 
+    // Configuration
+    private var useOnnxDetector = true  // Can be disabled for fallback
+    private var refineEyesWithMlKit = true  // Use ML Kit for eye position refinement
+
     /**
-     * Process a bitmap frame for face detection.
+     * Initialize the processor. Call before first use.
+     */
+    suspend fun initialize(): Result<Unit> {
+        return try {
+            // Try to initialize ONNX detector
+            if (onnxDetector.isModelAvailable()) {
+                val result = onnxDetector.initialize()
+                onnxInitialized = result.isSuccess
+                if (onnxInitialized) {
+                    Log.i(tag, "ONNX face detector initialized - using enhanced detection")
+                } else {
+                    Log.w(tag, "ONNX initialization failed, falling back to ML Kit")
+                }
+            } else {
+                Log.w(tag, "ONNX model not found, using ML Kit fallback")
+                onnxInitialized = false
+            }
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to initialize face detection processor", e)
+            Result.failure(e)
+        }
+    }
+
+    /**
+     * Check if ONNX detector is available and initialized
+     */
+    fun isOnnxAvailable(): Boolean = onnxInitialized
+
+    /**
+     * Process a bitmap frame for face detection with eye tracking.
      * Non-blocking - processes asynchronously and updates state flow.
      */
     fun processFrame(bitmap: Bitmap) {
@@ -88,19 +129,33 @@ class FaceDetectionProcessor(
                     _faceDetectionState.value = _faceDetectionState.value.copy(isProcessing = true)
 
                     val startTime = System.currentTimeMillis()
+                    val imageWidth = bitmap.width
+                    val imageHeight = bitmap.height
 
-                    // Create InputImage from bitmap
-                    val inputImage = InputImage.fromBitmap(bitmap, 0)
+                    // Step 1: Detect faces
+                    val rawDetections = if (onnxInitialized && useOnnxDetector) {
+                        detectWithOnnx(bitmap)
+                    } else {
+                        detectWithMlKit(bitmap)
+                    }
 
-                    // Detect faces using ML Kit
-                    val faces = detector.process(inputImage).await()
+                    // Step 2: Refine eye positions with ML Kit if needed
+                    val refinedDetections = if (refineEyesWithMlKit && onnxInitialized) {
+                        refineEyePositionsWithMlKit(rawDetections, bitmap)
+                    } else {
+                        rawDetections
+                    }
 
-                    // Process detected faces
-                    val detectedFaces = processFaces(faces, bitmap.width, bitmap.height)
+                    // Step 3: Track faces using Kalman filter
+                    val trackedFaces = subjectTracker.update(
+                        refinedDetections,
+                        imageWidth,
+                        imageHeight
+                    )
 
                     // Update statistics
                     val processingTime = System.currentTimeMillis() - startTime
-                    updateStatistics(processingTime, detectedFaces.size)
+                    updateStatistics(processingTime, trackedFaces)
 
                     // Calculate FPS
                     val currentTime = System.currentTimeMillis()
@@ -111,18 +166,28 @@ class FaceDetectionProcessor(
                     }
                     lastFrameTimestamp = currentTime
 
+                    // Preserve selected face ID if still being tracked
+                    val currentSelectedId = _faceDetectionState.value.selectedFaceId
+                    val preservedSelectedId = if (currentSelectedId != null &&
+                        trackedFaces.any { it.trackingId == currentSelectedId }
+                    ) {
+                        currentSelectedId
+                    } else {
+                        null
+                    }
+
                     // Update state
                     _faceDetectionState.value = _faceDetectionState.value.copy(
-                        detectedFaces = detectedFaces,
+                        detectedFaces = trackedFaces,
+                        selectedFaceId = preservedSelectedId,
                         isProcessing = false,
                         lastProcessedTimestamp = currentTime,
                         processingFps = fps
                     )
 
-                    // Cleanup stale face tracking entries
-                    faceTracker.cleanupStaleEntries()
-
-                    Log.d(tag, "Processed frame: ${detectedFaces.size} faces, ${processingTime}ms, ${fps.toInt()} FPS")
+                    Log.d(tag, "Processed frame: ${trackedFaces.size} faces, " +
+                            "${trackedFaces.count { it.hasEyes }} with eyes, " +
+                            "${processingTime}ms, ${fps.toInt()} FPS")
 
                 } catch (e: Exception) {
                     Log.e(tag, "Error processing frame", e)
@@ -133,90 +198,138 @@ class FaceDetectionProcessor(
     }
 
     /**
-     * Convert ML Kit faces to DetectedFace objects with tracking IDs and colors
+     * Detect faces using ONNX YOLO model
      */
-    private fun processFaces(faces: List<Face>, imageWidth: Int, imageHeight: Int): List<DetectedFace> {
-        // Track which faces are currently detected
-        val currentFaceIds = faces.mapNotNull { it.trackingId }.toSet()
+    private suspend fun detectWithOnnx(bitmap: Bitmap): List<RawFaceDetection> {
+        return onnxDetector.detect(bitmap)
+    }
 
-        // Update frame counter for currently detected faces
-        currentFaceIds.forEach { id ->
-            faceStabilityFrames[id] = (faceStabilityFrames[id] ?: 0) + 1
-            faceLastSeenFrame[id] = frameCount
-        }
+    /**
+     * Detect faces using ML Kit (fallback)
+     */
+    private suspend fun detectWithMlKit(bitmap: Bitmap): List<RawFaceDetection> {
+        return try {
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val faces = mlKitDetector.process(inputImage).await()
 
-        // Also check previously stable faces that might be temporarily occluded
-        val previouslyStableFaces = faceStabilityFrames.filter { (id, frames) ->
-            frames >= requiredStabilityFrames &&
-            (frameCount - (faceLastSeenFrame[id] ?: 0)) < faceRetentionFrames
-        }.keys
+            faces.take(MAX_TRACKED_FACES).map { face ->
+                val landmarks = mutableListOf<android.graphics.PointF>()
 
-        // Remove stability data for faces that haven't been seen recently
-        val allRelevantIds = currentFaceIds + previouslyStableFaces
-        faceStabilityFrames.keys.retainAll(allRelevantIds)
-        faceLastSeenFrame.keys.retainAll(allRelevantIds)
-        boundingBoxSmoothing.keys.retainAll(allRelevantIds)
-
-        // Only show faces that have been stable for required number of frames
-        val stableFaceIds = faceStabilityFrames.filter { (_, frames) ->
-            frames >= requiredStabilityFrames
-        }.keys
-
-        return faces.mapNotNull { face ->
-            try {
-                // Get tracking ID (ML Kit provides this when tracking is enabled)
-                val trackingId = face.trackingId ?: return@mapNotNull null
-
-                // Only show stable faces (detected for required consecutive frames)
-                if (!stableFaceIds.contains(trackingId)) {
-                    return@mapNotNull null
+                // Extract eye landmarks
+                face.getLandmark(FaceLandmark.LEFT_EYE)?.let { landmark ->
+                    landmarks.add(landmark.position)
+                }
+                face.getLandmark(FaceLandmark.RIGHT_EYE)?.let { landmark ->
+                    landmarks.add(landmark.position)
                 }
 
-                // Get raw bounding box from ML Kit
-                val rawBoundingBox = face.boundingBox
+                // Add nose and mouth if available (for consistency with YOLO output)
+                face.getLandmark(FaceLandmark.NOSE_BASE)?.let { landmarks.add(it.position) }
+                face.getLandmark(FaceLandmark.MOUTH_LEFT)?.let { landmarks.add(it.position) }
+                face.getLandmark(FaceLandmark.MOUTH_RIGHT)?.let { landmarks.add(it.position) }
 
-                // Apply exponential moving average smoothing to bounding box
-                val smoothedBoundingBox = boundingBoxSmoothing[trackingId]?.let { previousBox ->
-                    Rect(
-                        (previousBox.left * (1f - smoothingFactor) + rawBoundingBox.left * smoothingFactor).toInt(),
-                        (previousBox.top * (1f - smoothingFactor) + rawBoundingBox.top * smoothingFactor).toInt(),
-                        (previousBox.right * (1f - smoothingFactor) + rawBoundingBox.right * smoothingFactor).toInt(),
-                        (previousBox.bottom * (1f - smoothingFactor) + rawBoundingBox.bottom * smoothingFactor).toInt()
-                    )
-                } ?: rawBoundingBox
-
-                // Store smoothed box for next frame
-                boundingBoxSmoothing[trackingId] = smoothedBoundingBox
-
-                // Calculate normalized center point for autofocus using smoothed box
-                val centerX = smoothedBoundingBox.centerX().toFloat() / imageWidth
-                val centerY = smoothedBoundingBox.centerY().toFloat() / imageHeight
-                val centerPoint = FocusPoint(centerX, centerY)
-
-                // Get or assign color for this face
-                val color = faceTracker.getColorForFace(trackingId)
-
-                // Create DetectedFace object with smoothed bounding box
-                DetectedFace(
-                    trackingId = trackingId,
-                    boundingBox = smoothedBoundingBox,
-                    centerPoint = centerPoint,
-                    confidence = 1.0f, // ML Kit doesn't provide confidence, so we use 1.0
-                    color = color
+                RawFaceDetection(
+                    boundingBox = face.boundingBox,
+                    confidence = 0.9f,  // ML Kit doesn't provide confidence
+                    landmarks = if (landmarks.isNotEmpty()) landmarks else null
                 )
-            } catch (e: Exception) {
-                Log.e(tag, "Error processing face", e)
-                null
             }
+        } catch (e: Exception) {
+            Log.e(tag, "ML Kit detection failed", e)
+            emptyList()
         }
+    }
+
+    /**
+     * Refine eye positions using ML Kit landmarks.
+     * YOLO provides good face detection but ML Kit may give more accurate eye positions.
+     */
+    private suspend fun refineEyePositionsWithMlKit(
+        detections: List<RawFaceDetection>,
+        bitmap: Bitmap
+    ): List<RawFaceDetection> {
+        if (detections.isEmpty()) return detections
+
+        return try {
+            val inputImage = InputImage.fromBitmap(bitmap, 0)
+            val mlKitFaces = mlKitDetector.process(inputImage).await()
+
+            detections.map { detection ->
+                // Find matching ML Kit face by IoU
+                val matchingMlKitFace = findMatchingMlKitFace(detection.boundingBox, mlKitFaces)
+
+                if (matchingMlKitFace != null) {
+                    // Extract refined eye positions from ML Kit
+                    val refinedLandmarks = mutableListOf<android.graphics.PointF>()
+
+                    matchingMlKitFace.getLandmark(FaceLandmark.LEFT_EYE)?.let {
+                        refinedLandmarks.add(it.position)
+                    } ?: detection.landmarks?.getOrNull(0)?.let { refinedLandmarks.add(it) }
+
+                    matchingMlKitFace.getLandmark(FaceLandmark.RIGHT_EYE)?.let {
+                        refinedLandmarks.add(it.position)
+                    } ?: detection.landmarks?.getOrNull(1)?.let { refinedLandmarks.add(it) }
+
+                    // Keep other landmarks from YOLO
+                    detection.landmarks?.getOrNull(2)?.let { refinedLandmarks.add(it) }
+                    detection.landmarks?.getOrNull(3)?.let { refinedLandmarks.add(it) }
+                    detection.landmarks?.getOrNull(4)?.let { refinedLandmarks.add(it) }
+
+                    detection.copy(
+                        landmarks = if (refinedLandmarks.isNotEmpty()) refinedLandmarks else detection.landmarks
+                    )
+                } else {
+                    detection
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(tag, "Eye refinement failed", e)
+            detections
+        }
+    }
+
+    /**
+     * Find the ML Kit face that best matches a given bounding box
+     */
+    private fun findMatchingMlKitFace(targetBox: Rect, mlKitFaces: List<Face>): Face? {
+        return mlKitFaces
+            .map { face -> face to calculateIoU(targetBox, face.boundingBox) }
+            .filter { (_, iou) -> iou > 0.3f }
+            .maxByOrNull { (_, iou) -> iou }
+            ?.first
+    }
+
+    /**
+     * Calculate IoU between two rectangles
+     */
+    private fun calculateIoU(box1: Rect, box2: Rect): Float {
+        val intersectionLeft = maxOf(box1.left, box2.left)
+        val intersectionTop = maxOf(box1.top, box2.top)
+        val intersectionRight = minOf(box1.right, box2.right)
+        val intersectionBottom = minOf(box1.bottom, box2.bottom)
+
+        if (intersectionRight <= intersectionLeft || intersectionBottom <= intersectionTop) {
+            return 0f
+        }
+
+        val intersectionArea = (intersectionRight - intersectionLeft) * (intersectionBottom - intersectionTop)
+        val box1Area = box1.width() * box1.height()
+        val box2Area = box2.width() * box2.height()
+        val unionArea = box1Area + box2Area - intersectionArea
+
+        return if (unionArea > 0) intersectionArea.toFloat() / unionArea else 0f
     }
 
     /**
      * Update processing statistics
      */
-    private fun updateStatistics(processingTimeMs: Long, faceCount: Int) {
+    private fun updateStatistics(processingTimeMs: Long, faces: List<DetectedFace>) {
         frameCount++
         totalProcessingTimeMs += processingTimeMs
+
+        if (faces.any { it.hasEyes }) {
+            framesWithEyes++
+        }
     }
 
     /**
@@ -224,12 +337,13 @@ class FaceDetectionProcessor(
      */
     fun selectFaceAt(x: Float, y: Float, imageWidth: Int, imageHeight: Int) {
         val currentState = _faceDetectionState.value
+
         val tappedFace = currentState.detectedFaces.find { face ->
             face.contains(x, y, imageWidth, imageHeight)
         }
 
-        if (tappedFace != null) {
-            Log.d(tag, "Selected face: ${tappedFace.trackingId}")
+        if (tappedFace != null && tappedFace.trackingId != currentState.selectedFaceId) {
+            log("Selected face ${tappedFace.trackingId}")
             _faceDetectionState.value = currentState.copy(
                 selectedFaceId = tappedFace.trackingId
             )
@@ -244,14 +358,24 @@ class FaceDetectionProcessor(
     }
 
     /**
+     * Set focus target preference (which eye to focus on)
+     */
+    fun setFocusTargetPreference(target: FocusTarget) {
+        _faceDetectionState.value = _faceDetectionState.value.copy(
+            focusTargetPreference = target
+        )
+    }
+
+    /**
      * Reset face tracking (clears all tracking data)
      */
     fun reset() {
-        faceTracker.reset()
+        subjectTracker.reset()
         _faceDetectionState.value = FaceDetectionState()
         frameCount = 0
         totalProcessingTimeMs = 0
         lastFrameTimestamp = 0
+        framesWithEyes = 0
     }
 
     /**
@@ -266,11 +390,63 @@ class FaceDetectionProcessor(
     }
 
     /**
+     * Get eye detection rate (percentage of frames with eye detection)
+     */
+    fun getEyeDetectionRate(): Float {
+        return if (frameCount > 0) {
+            framesWithEyes.toFloat() / frameCount
+        } else {
+            0f
+        }
+    }
+
+    /**
+     * Get detection statistics
+     */
+    fun getStatistics(): FaceDetectionStatistics {
+        return FaceDetectionStatistics(
+            totalFramesProcessed = frameCount,
+            totalFacesDetected = frameCount * _faceDetectionState.value.detectedFaces.size.toLong(),
+            averageProcessingTimeMs = getAverageProcessingTime(),
+            currentFps = _faceDetectionState.value.processingFps,
+            maxFacesInFrame = MAX_TRACKED_FACES,
+            eyeDetectionRate = getEyeDetectionRate()
+        )
+    }
+
+    /**
+     * Enable or disable ONNX detector (for testing/fallback)
+     */
+    fun setUseOnnxDetector(enabled: Boolean) {
+        useOnnxDetector = enabled && onnxInitialized
+    }
+
+    /**
+     * Enable or disable ML Kit eye refinement
+     */
+    fun setRefineEyesWithMlKit(enabled: Boolean) {
+        refineEyesWithMlKit = enabled
+    }
+
+    /**
      * Cleanup resources
      */
     fun cleanup() {
         processingJob?.cancel()
-        detector.close()
-        faceTracker.reset()
+        mlKitDetector.close()
+        onnxDetector.release()
+        subjectTracker.reset()
     }
+}
+
+/**
+ * Legacy constructor for backward compatibility.
+ * New code should use the constructor with Context.
+ */
+@Deprecated("Use constructor with Context for ONNX support")
+fun FaceDetectionProcessor(scope: CoroutineScope): FaceDetectionProcessor {
+    throw IllegalStateException(
+        "FaceDetectionProcessor now requires Context for ONNX support. " +
+        "Use FaceDetectionProcessor(context, scope) instead."
+    )
 }
