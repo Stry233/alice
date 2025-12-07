@@ -13,7 +13,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1"
+        versionName = "0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -63,11 +63,10 @@ dependencies {
     implementation(files("libs/librealsense-release.aar"))
 
     // ML Kit Face Detection for face tracking autofocus
-    implementation("com.google.mlkit:face-detection:16.1.7")
-
-    // Coroutines support for Google Play Services (required for ML Kit)
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
+    implementation(libs.face.detection)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.play.services.mlkit.face.detection)
+    implementation(libs.onnxruntime.android)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
