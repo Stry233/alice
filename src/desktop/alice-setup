@@ -1,0 +1,35 @@
+#!/bin/bash
+# Alice Desktop — device permission setup
+# Installs/uninstalls udev rules for the nRF52840 motor dongle.
+
+RULES_FILE="/etc/udev/rules.d/99-alice.rules"
+RULE_CONTENT='# Alice — nRF52840 Motor Control Dongle (Tilta Nucleus Nano II)
+SUBSYSTEM=="tty", ATTRS{idVendor}=="2fe3", ATTRS{idProduct}=="0100", MODE="0666", SYMLINK+="alice-motor"'
+
+case "${1:-install}" in
+    install)
+        echo "Installing Alice device rules..."
+        echo "$RULE_CONTENT" | sudo tee "$RULES_FILE" > /dev/null
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger
+        echo "Done. Re-plug the motor dongle or reboot."
+        ;;
+    uninstall)
+        echo "Removing Alice device rules..."
+        sudo rm -f "$RULES_FILE"
+        sudo udevadm control --reload-rules
+        echo "Done. Alice udev rules removed."
+        ;;
+    status)
+        if [ -f "$RULES_FILE" ]; then
+            echo "Alice device rules: installed"
+            cat "$RULES_FILE"
+        else
+            echo "Alice device rules: not installed"
+        fi
+        ;;
+    *)
+        echo "Usage: alice-setup [install|uninstall|status]"
+        exit 1
+        ;;
+esac

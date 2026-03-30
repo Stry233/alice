@@ -1,0 +1,119 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Alice Sync Protocol",
+  "description": "WebSocket message schema for LAN state synchronization between Alice desktop and Android clients",
+  "type": "object",
+  "required": ["type", "timestamp", "sender", "payload"],
+  "properties": {
+    "type": {
+      "type": "string",
+      "enum": ["STATE_UPDATE", "MOTOR_COMMAND", "MODE_CHANGE", "CALIBRATION_SYNC", "HEARTBEAT", "AUTHENTICATE"]
+    },
+    "timestamp": {
+      "type": "integer",
+      "description": "Unix timestamp in milliseconds"
+    },
+    "sender": {
+      "type": "string",
+      "enum": ["desktop", "android"]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "type": { "const": "STATE_UPDATE" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "motorPosition": { "type": "integer", "minimum": 0, "maximum": 4095 },
+              "depth": { "type": "number", "description": "Depth in meters" },
+              "depthConfidence": { "type": "number", "minimum": 0, "maximum": 1 },
+              "focusMode": { "type": "string", "enum": ["MANUAL", "SINGLE_AUTO", "CONTINUOUS_AUTO", "FACE_TRACKING"] },
+              "isEnabled": { "type": "boolean" },
+              "isActivelyFocusing": { "type": "boolean" },
+              "facesDetected": { "type": "integer" },
+              "connectionStates": {
+                "type": "object",
+                "properties": {
+                  "motor": { "type": "string" },
+                  "realSense": { "type": "string" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "MOTOR_COMMAND" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["position"],
+            "properties": {
+              "position": { "type": "integer", "minimum": 0, "maximum": 4095 },
+              "source": { "type": "string", "enum": ["manual", "autofocus"] },
+              "priority": { "type": "string", "enum": ["HIGH", "NORMAL"] }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "MODE_CHANGE" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "properties": {
+              "mode": { "type": "string", "enum": ["MANUAL", "SINGLE_AUTO", "CONTINUOUS_AUTO", "FACE_TRACKING"] },
+              "enabled": { "type": "boolean" },
+              "settings": {
+                "type": "object",
+                "properties": {
+                  "confidenceThreshold": { "type": "number", "minimum": 0, "maximum": 1 },
+                  "smoothing": { "type": "boolean" },
+                  "responseSpeed": { "type": "integer", "minimum": 0, "maximum": 100 }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "CALIBRATION_SYNC" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["action"],
+            "properties": {
+              "action": { "type": "string", "enum": ["PUSH", "PULL", "LIST"] },
+              "mapping": { "type": "object", "description": "Full AutofocusMapping JSON" }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "type": { "const": "AUTHENTICATE" } } },
+      "then": {
+        "properties": {
+          "payload": {
+            "type": "object",
+            "required": ["token"],
+            "properties": {
+              "token": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
