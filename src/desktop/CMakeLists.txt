@@ -132,6 +132,8 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/SystemMonitorPanel.qml
         src/ui/qml/components/BottomStrip.qml
         src/ui/qml/components/SettingsCard.qml
+        src/ui/qml/components/ZoomToolbar.qml
+        src/ui/qml/components/MiniMap.qml
     RESOURCES
         assets/fonts/Inter-Regular.ttf
         assets/fonts/Inter-Medium.ttf
