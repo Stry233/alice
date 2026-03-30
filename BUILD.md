@@ -1,6 +1,6 @@
 # Building Alice
 
-Instructions for building the Android app and dongle firmware from source.
+Instructions for building the Android app, desktop client, and dongle firmware from source.
 
 ## Android App
 
@@ -13,17 +13,44 @@ Instructions for building the Android app and dongle firmware from source.
 ### Build Steps
 
 1. Clone the repository
-2. Open the project in Android Studio
+2. Open `src/android/` in Android Studio as the project root
 3. Wait for Gradle to sync dependencies
 4. Build > Make Project
 
-The debug APK will be at `app/build/outputs/apk/debug/app-debug.apk`.
+The debug APK will be at `src/android/app/build/outputs/apk/debug/app-debug.apk`.
 
 For a release build, use Build > Generate Signed Bundle / APK.
 
 ### Notes
 
-Dependencies are managed by Gradle and will be downloaded automatically. The RealSense SDK AAR is bundled in `app/libs/`.
+Dependencies are managed by Gradle and will be downloaded automatically. The RealSense SDK AAR is bundled in `src/android/app/libs/`.
+
+---
+
+## Desktop Client (C++ / Qt)
+
+### Prerequisites
+
+- CMake 3.21 or higher
+- Qt 6.x (Core, Quick, SerialPort, WebSockets)
+- Intel RealSense SDK 2.x (`librealsense2`)
+- ONNX Runtime (C++ API)
+- A C++17 compatible compiler (GCC 9+, Clang 10+, MSVC 2019+)
+
+### Build Steps
+
+```bash
+cd src/desktop
+mkdir build && cd build
+cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt6
+cmake --build .
+```
+
+The binary will be at `src/desktop/build/AliceDesktop`.
+
+### Notes
+
+On Linux, install librealsense2 via your package manager or build from source. On Windows, the Intel RealSense SDK installer provides the necessary libraries.
 
 ---
 
@@ -68,6 +95,7 @@ The LED turns blue when flashing completes, and green when connected to Alice.
 **Gradle sync fails**
 - Verify JDK 11+ is configured in Android Studio
 - Ensure Android SDK API 35 is installed
+- Make sure you opened `src/android/` as the project root, not the repository root
 
 **Board not found during firmware build**
 - Confirm nRF Connect SDK is fully installed via the VS Code extension
@@ -77,3 +105,11 @@ The LED turns blue when flashing completes, and green when connected to Alice.
 - Press Reset to enter bootloader mode (LED should pulse)
 - Try a different USB port
 - On Windows, install J-Link software with the "Legacy USB Driver" option selected
+
+**Desktop build fails to find Qt**
+- Set `-DCMAKE_PREFIX_PATH` to your Qt 6 installation directory
+- Ensure Qt SerialPort and WebSockets modules are installed
+
+**Desktop build fails to find librealsense2**
+- On Ubuntu/Fedora: install `librealsense2-dev` from the Intel repository
+- On Windows: install the Intel RealSense SDK and set `realsense2_DIR` in CMake

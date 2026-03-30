@@ -24,7 +24,6 @@ import java.io.IOException
 import android.hardware.usb.UsbManager
 import android.content.Context
 import android.hardware.usb.UsbDevice
-import androidx.lifecycle.application
 import kotlinx.coroutines.Job
 
 enum class CameraState { IDLE, CONNECTING, READY, ERROR }
@@ -310,7 +309,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
         // Create autofocus coordinator
         autofocusCoordinator = AutofocusCoordinator(
-            context = application.applicationContext,
             autofocusController = autofocusController,
             motorManager = motorControlManager,
             realSenseManager = realSenseManager,
@@ -322,7 +320,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             onLogMessage = { category, message ->
                 val logCategory = when (category) {
                     "AUTOFOCUS" -> LogCategory.AUTOFOCUS
-                    "FACE_TRACKING" -> LogCategory.AUTOFOCUS
                     "MOTOR" -> LogCategory.MOTOR
                     "REALSENSE" -> LogCategory.REALSENSE
                     else -> LogCategory.SYSTEM
@@ -332,8 +329,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     message.contains("Warning", ignoreCase = true) ||
                     message.contains("lost", ignoreCase = true) -> LogLevel.WARNING
                     message.contains("started", ignoreCase = true) ||
-                    message.contains("achieved", ignoreCase = true) ||
-                    message.contains("Eye", ignoreCase = true) -> LogLevel.DEBUG
+                    message.contains("achieved", ignoreCase = true) -> LogLevel.DEBUG
                     else -> LogLevel.INFO
                 }
                 log(logCategory, message, logLevel)
