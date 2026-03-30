@@ -114,9 +114,6 @@ qt_add_qml_module(alice_ui
     QML_FILES
         src/ui/qml/Main.qml
         src/ui/qml/Theme.qml
-        src/ui/qml/CameraView.qml
-        src/ui/qml/ControlPanel.qml
-        src/ui/qml/TelemetryPanel.qml
         src/ui/qml/CalibrationView.qml
         src/ui/qml/SettingsView.qml
         src/ui/qml/ConnectionView.qml
