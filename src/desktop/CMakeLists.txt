@@ -120,6 +120,7 @@ qt_add_qml_module(alice_ui
         src/ui/qml/CalibrationView.qml
         src/ui/qml/SettingsView.qml
         src/ui/qml/ConnectionDialog.qml
+        src/ui/qml/OpsView.qml
         src/ui/qml/components/AppCard.qml
         src/ui/qml/components/SectionHeader.qml
         src/ui/qml/components/DataLabel.qml
