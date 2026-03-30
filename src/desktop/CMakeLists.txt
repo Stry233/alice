@@ -137,6 +137,9 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/MiniMap.qml
         src/ui/qml/components/BadgePopover.qml
         src/ui/qml/components/SyncPopover.qml
+        src/ui/qml/CfgView.qml
+        src/ui/qml/components/CalibrationTable.qml
+        src/ui/qml/components/CalibrationGraph.qml
     RESOURCES
         assets/fonts/Inter-Regular.ttf
         assets/fonts/Inter-Medium.ttf
