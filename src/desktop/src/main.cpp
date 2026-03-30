@@ -8,6 +8,7 @@
 #include <QIcon>
 
 #include "ui/AppController.h"
+#include "core/system/SystemMonitor.h"
 #include "ui/VideoRenderer.h"
 #include "ui/DepthRenderer.h"
 #include "ui/FaceOverlay.h"
@@ -53,6 +54,9 @@ int main(int argc, char *argv[])
 
     alice::AppController controller;
     engine.rootContext()->setContextProperty("alice", &controller);
+
+    alice::SystemMonitor sysMonitor;
+    engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
 
     QQmlComponent component(&engine);
     const QUrl url(u"qrc:/qt/qml/Alice/UI/src/ui/qml/Main.qml"_s);

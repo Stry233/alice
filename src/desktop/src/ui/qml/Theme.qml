@@ -75,4 +75,27 @@ QtObject {
     readonly property int toolbarHeight:  40
     readonly property int controlHeight:  28
     readonly property int inputHeight:    30
+
+    // Popover
+    readonly property int popoverWidth: 200
+    readonly property int syncPopoverWidth: 180
+
+    // Sidebar widths
+    readonly property int sidebarNarrow: 200
+    readonly property int sidebarStandard: 260
+    readonly property int sidebarWide: 240
+    readonly property int telemetryColumnWidth: 260
+
+    // Breakpoints (compact: < 1280, standard: 1280-1599, wide: 1600+)
+    readonly property int breakpointCompact: 1024
+    readonly property int breakpointStandard: 1280
+    readonly property int breakpointWide: 1600
+
+    // Camera zoom
+    readonly property real zoomMin: 1.0
+    readonly property real zoomMax: 4.0
+    readonly property real zoomStep: 0.25
+
+    // Section header (font size)
+    readonly property int sectionFontSize: 9
 }

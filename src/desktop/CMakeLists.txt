@@ -67,6 +67,7 @@ add_library(alice_core STATIC
     src/core/coordination/DeviceCoordinator.cpp
     src/core/coordination/SettingsManager.cpp
     src/core/camera/CaptureCardManager.cpp
+    src/core/system/SystemMonitor.cpp
 )
 target_include_directories(alice_core PUBLIC src)
 target_link_libraries(alice_core PUBLIC
@@ -133,6 +134,10 @@ qt_add_qml_module(alice_ui
         assets/fonts/Inter-Bold.ttf
         assets/fonts/RobotoMono-Regular.ttf
         assets/alice_icon.png
+        assets/icons/alice_logo.svg
+        assets/icons/zoom_in.svg
+        assets/icons/zoom_out.svg
+        assets/icons/zoom_fit.svg
 )
 target_link_libraries(alice_ui PUBLIC
     alice_core
@@ -170,6 +175,7 @@ if(BUILD_TESTS)
         tests/test_kalman.cpp
         tests/test_autofocus.cpp
         tests/test_motor_protocol.cpp
+        tests/test_system_monitor.cpp
     )
     target_link_libraries(alice_tests PRIVATE
         alice_core
