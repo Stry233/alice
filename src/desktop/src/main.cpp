@@ -33,8 +33,8 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setOrganizationName("SelkaCraft");
     app.setOrganizationDomain("selkacraft.com");
-    app.setApplicationName("Alice Studio");
-    app.setApplicationVersion("0.1");
+    app.setApplicationName(ALICE_APP_NAME);
+    app.setApplicationVersion(ALICE_APP_VERSION);
 
     // App icon set after splash painting below
 
@@ -107,7 +107,7 @@ int main(int argc, char *argv[])
         titleFont.setCapitalization(QFont::AllUppercase);
         p.setFont(titleFont);
         p.setPen(QColor("#E1E8ED"));
-        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, "Alice Studio");
+        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, ALICE_APP_NAME);
 
         // Subtitle
         p.setFont(QFont("Inter", 8));
@@ -127,7 +127,7 @@ int main(int argc, char *argv[])
         // Version — bottom right in footer
         p.setFont(QFont("Inter", 7));
         p.setPen(QColor("#5C6B7A"));
-        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v0.1");
+        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v" ALICE_APP_VERSION);
 
         // Copyright — bottom left in footer
         p.drawText(QRect(16, h - 22, 200, 12), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");

@@ -114,12 +114,12 @@ On Linux with system-installed Qt6, no `-DCMAKE_PREFIX_PATH` is needed. On Windo
 cmake .. -DCMAKE_PREFIX_PATH=/path/to/qt6
 ```
 
-The binary will be at `src/desktop/build/AliceDesktop`.
+The binary will be at `src/desktop/build/AliceStudio`.
 
 ### Running
 
 ```bash
-./AliceDesktop
+./AliceStudio
 ```
 
 The app will auto-discover connected hardware (RealSense, motor dongle, capture card). Check the log panel at the bottom for connection status and errors.

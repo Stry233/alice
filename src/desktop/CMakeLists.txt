@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(AliceDesktop VERSION 0.1 LANGUAGES CXX)
+project(AliceStudio VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -70,6 +70,10 @@ add_library(alice_core STATIC
     src/core/system/SystemMonitor.cpp
 )
 target_include_directories(alice_core PUBLIC src)
+target_compile_definitions(alice_core PUBLIC
+    ALICE_APP_VERSION="${PROJECT_VERSION}"
+    ALICE_APP_NAME="Alice Studio"
+)
 target_link_libraries(alice_core PUBLIC
     Qt6::Core
     Qt6::Gui
@@ -163,18 +167,18 @@ target_link_libraries(alice_ui PUBLIC
 )
 
 # Main executable
-qt_add_executable(AliceDesktop src/main.cpp)
-target_link_libraries(AliceDesktop PRIVATE
+qt_add_executable(AliceStudio src/main.cpp)
+target_link_libraries(AliceStudio PRIVATE
     alice_ui
     alice_uiplugin
     Qt6::QuickControls2
     Qt6::Widgets
     Qt6::Svg
 )
-qt_import_qml_plugins(AliceDesktop)
+qt_import_qml_plugins(AliceStudio)
 
 # Install
-install(TARGETS AliceDesktop RUNTIME DESTINATION bin)
+install(TARGETS AliceStudio RUNTIME DESTINATION bin)
 
 # Testing
 option(BUILD_TESTS "Build unit tests" ON)

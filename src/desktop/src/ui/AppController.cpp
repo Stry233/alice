@@ -173,7 +173,7 @@ void AppController::initialize() {
         logBuffer_.append(line);
     emit logChanged();
 
-    log("SYSTEM", "Alice Desktop v0.1 starting...");
+    log("SYSTEM", QString("%1 v%2 starting...").arg(ALICE_APP_NAME, ALICE_APP_VERSION));
 
     // Apply settings to motor
     motor_->setOffset(settings_->motorOffset());

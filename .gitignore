@@ -203,3 +203,9 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+
+# Internal release/packaging (not committed)
+src/desktop/release/
+*.AppImage
+*.tar.gz
