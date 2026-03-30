@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Layouts
 
@@ -9,9 +10,9 @@ Rectangle {
 
     width: row.implicitWidth + 16
     height: 28
-    radius: 14
-    color: connected ? "#1b4332" : "#2b2930"
-    border.color: connected ? "#64ff64" : "#3b383e"
+    radius: Theme.radiusSm
+    color: connected ? Theme.successMuted : Theme.elevated
+    border.color: connected ? Theme.success : Theme.border
     border.width: 1
 
     RowLayout {
@@ -21,13 +22,13 @@ Rectangle {
 
         Rectangle {
             width: 8; height: 8; radius: 4
-            color: connected ? "#64ff64" : "#f2b8b5"
+            color: connected ? Theme.success : Theme.dangerText
         }
 
         Label {
             text: badge.label
             font.pixelSize: 11
-            color: connected ? "#e6e1e5" : "#a09da6"
+            color: connected ? Theme.textPrimary : Theme.textSecondary
         }
     }
 }

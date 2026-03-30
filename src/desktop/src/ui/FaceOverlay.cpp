@@ -21,7 +21,7 @@ void FaceOverlay::paint(QPainter *painter) {
 
     for (const auto &v : faces_) {
         QVariantMap face = v.toMap();
-        QColor color = face.value("color", QColor(0, 200, 255)).value<QColor>();
+        QColor color = face.value("color", QColor(72, 175, 240)).value<QColor>();
 
         // Bounding box (normalized 0–1 coords)
         float left   = face.value("left", 0.0).toFloat() * static_cast<float>(width());

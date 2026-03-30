@@ -29,7 +29,17 @@ int main(int argc, char *argv[])
 
     fprintf(stderr, "[Alice] Starting...\n");
 
+    QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Regular.ttf");
+    QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Medium.ttf");
+    QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-SemiBold.ttf");
+    QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Bold.ttf");
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/RobotoMono-Regular.ttf");
+
+    QFont defaultFont("Inter");
+    defaultFont.setPixelSize(13);
+    app.setFont(defaultFont);
+
+    qputenv("QT_QUICK_CONTROLS_MATERIAL_VARIANT", "Dense");
     QQuickStyle::setStyle("Material");
 
     qmlRegisterType<alice::VideoRenderer>("Alice.Renderers", 1, 0, "VideoRenderer");

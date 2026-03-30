@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -24,7 +25,7 @@ Item {
                 Layout.fillWidth: true
                 currentIndex: currentTab
                 onCurrentIndexChanged: currentTab = currentIndex
-                Material.accent: "#d0bcff"
+                Material.accent: Theme.primary
 
                 TabButton { text: "Autofocus" }
                 TabButton { text: "Motor" }
@@ -46,32 +47,32 @@ Item {
                         spacing: 16
                         anchors.margins: 20
 
-                        Label { text: "Confidence Threshold"; color: "#a09da6" }
+                        Label { text: "Confidence Threshold"; color: Theme.textSecondary }
                         Slider {
                             Layout.fillWidth: true
                             from: 0.0; to: 1.0; stepSize: 0.05
                             value: 0.7
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                         }
 
-                        Label { text: "Smoothing"; color: "#a09da6" }
+                        Label { text: "Smoothing"; color: Theme.textSecondary }
                         Switch {
                             checked: true
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                         }
 
-                        Label { text: "Response Speed"; color: "#a09da6" }
+                        Label { text: "Response Speed"; color: Theme.textSecondary }
                         Slider {
                             Layout.fillWidth: true
                             from: 0; to: 100; stepSize: 5
                             value: 50
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                         }
 
                         Button {
                             text: "Reset Autofocus Settings"
                             flat: true
-                            Material.foreground: "#f2b8b5"
+                            Material.foreground: Theme.dangerText
                         }
                     }
                 }
@@ -83,26 +84,26 @@ Item {
                         spacing: 16
                         anchors.margins: 20
 
-                        Label { text: "Reverse Direction"; color: "#a09da6" }
+                        Label { text: "Reverse Direction"; color: Theme.textSecondary }
                         Switch {
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                         }
 
-                        Label { text: "Calibration Offset"; color: "#a09da6" }
+                        Label { text: "Calibration Offset"; color: Theme.textSecondary }
                         SpinBox {
                             from: -500; to: 500
                             value: 0
                             Layout.fillWidth: true
                         }
 
-                        Label { text: "Destination Address (hex)"; color: "#a09da6" }
+                        Label { text: "Destination Address (hex)"; color: Theme.textSecondary }
                         RowLayout {
                             TextField {
                                 id: destField
                                 text: "FFFF"
                                 Layout.fillWidth: true
                                 inputMask: "HHHH"
-                                font.family: "RobotoMono"
+                                font.family: Theme.fontFamilyMono
                             }
                             Button {
                                 text: "Set"
@@ -117,7 +118,7 @@ Item {
                         Button {
                             text: "Reset Motor Settings"
                             flat: true
-                            Material.foreground: "#f2b8b5"
+                            Material.foreground: Theme.dangerText
                         }
                     }
                 }
@@ -129,24 +130,24 @@ Item {
                         spacing: 16
                         anchors.margins: 20
 
-                        Label { text: "Confidence Threshold"; color: "#a09da6" }
+                        Label { text: "Confidence Threshold"; color: Theme.textSecondary }
                         Slider {
                             Layout.fillWidth: true
                             from: 0.0; to: 1.0; stepSize: 0.05
                             value: 0.7
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                         }
 
-                        Label { text: "Min Distance (mm)"; color: "#a09da6" }
+                        Label { text: "Min Distance (mm)"; color: Theme.textSecondary }
                         SpinBox { from: 100; to: 1000; value: 200; Layout.fillWidth: true }
 
-                        Label { text: "Max Distance (mm)"; color: "#a09da6" }
+                        Label { text: "Max Distance (mm)"; color: Theme.textSecondary }
                         SpinBox { from: 1000; to: 10000; value: 5000; Layout.fillWidth: true }
 
                         Button {
                             text: "Reset Depth Settings"
                             flat: true
-                            Material.foreground: "#f2b8b5"
+                            Material.foreground: Theme.dangerText
                         }
                     }
                 }
@@ -159,14 +160,14 @@ Item {
                         anchors.margins: 20
 
                         // Depth Camera section
-                        Label { text: "Depth Camera (RealSense)"; color: "#a09da6"; font.pixelSize: 14; font.weight: Font.Bold }
+                        Label { text: "Depth Camera (RealSense)"; color: Theme.textSecondary; font.pixelSize: 14; font.weight: Font.Bold }
 
-                        Label { text: "Depth Resolution"; color: "#a09da6" }
+                        Label { text: "Depth Resolution"; color: Theme.textSecondary }
                         ComboBox {
                             Layout.fillWidth: true
                             model: alice ? alice.realSenseDepthModes : []
                             textRole: "label"
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                             onActivated: (index) => {
                                 if (!alice) return
                                 let mode = alice.realSenseDepthModes[index]
@@ -180,8 +181,8 @@ Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: width * 3 / 4
                             Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
+                            color: Theme.well
+                            radius: Theme.radiusLg
                             DepthRenderer {
                                 anchors.centerIn: parent
                                 width: Math.min(parent.width - 4, (parent.height - 4) * 4 / 3)
@@ -192,13 +193,13 @@ Item {
                             }
                         }
 
-                        Label { text: "Color Preview"; color: "#a09da6" }
+                        Label { text: "Color Preview"; color: Theme.textSecondary }
                         Rectangle {
                             Layout.fillWidth: true
                             Layout.preferredHeight: width * 3 / 4
                             Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
+                            color: Theme.well
+                            radius: Theme.radiusLg
                             VideoRenderer {
                                 anchors.centerIn: parent
                                 width: Math.min(parent.width - 4, (parent.height - 4) * 4 / 3)
@@ -208,17 +209,17 @@ Item {
                         }
 
                         // Separator
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "#3b383e" }
+                        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
                         // Capture Card section
-                        Label { text: "Camera (Capture Card)"; color: "#a09da6"; font.pixelSize: 14; font.weight: Font.Bold }
+                        Label { text: "Camera (Capture Card)"; color: Theme.textSecondary; font.pixelSize: 14; font.weight: Font.Bold }
 
-                        Label { text: "Resolution"; color: "#a09da6" }
+                        Label { text: "Resolution"; color: Theme.textSecondary }
                         ComboBox {
                             Layout.fillWidth: true
                             model: alice ? alice.captureCardFormats : []
                             textRole: "label"
-                            Material.accent: "#d0bcff"
+                            Material.accent: Theme.primary
                             onActivated: (index) => {
                                 if (!alice) return
                                 let fmt = alice.captureCardFormats[index]
@@ -231,8 +232,8 @@ Item {
                             Layout.fillWidth: true
                             Layout.preferredHeight: width * 9 / 16
                             Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
+                            color: Theme.well
+                            radius: Theme.radiusLg
                             VideoRenderer {
                                 anchors.centerIn: parent
                                 width: Math.min(parent.width - 4, (parent.height - 4) * 16 / 9)
@@ -251,18 +252,18 @@ Item {
                         spacing: 16
                         anchors.margins: 20
 
-                        Label { text: "Sync Server Port"; color: "#a09da6" }
+                        Label { text: "Sync Server Port"; color: Theme.textSecondary }
                         SpinBox { from: 1024; to: 65535; value: 8765; Layout.fillWidth: true }
 
                         RowLayout {
                             Button {
                                 text: alice && alice.syncServerRunning ? "Stop Server" : "Start Server"
-                                Material.background: alice && alice.syncServerRunning ? "#f2b8b5" : "#6650a4"
+                                Material.background: alice && alice.syncServerRunning ? Theme.dangerText : Theme.primary
                                 onClicked: { if (!alice) return; alice.syncServerRunning ? alice.stopSyncServer() : alice.startSyncServer() }
                             }
                             Label {
                                 text: alice && alice.syncServerRunning ? "Running" : "Stopped"
-                                color: alice && alice.syncServerRunning ? "#64ff64" : "#a09da6"
+                                color: alice && alice.syncServerRunning ? Theme.success : Theme.textSecondary
                             }
                         }
                     }
@@ -275,7 +276,7 @@ Item {
                         spacing: 16
                         anchors.margins: 20
 
-                        Label { text: "Log Verbosity"; color: "#a09da6" }
+                        Label { text: "Log Verbosity"; color: Theme.textSecondary }
                         ComboBox {
                             model: ["ERROR", "WARNING", "INFO", "DEBUG"]
                             currentIndex: 2
@@ -285,7 +286,7 @@ Item {
                         Button {
                             text: "Reset All Settings"
                             flat: true
-                            Material.foreground: "#f2b8b5"
+                            Material.foreground: Theme.dangerText
                         }
                     }
                 }
@@ -293,7 +294,7 @@ Item {
         }
 
         // Separator
-        Rectangle { Layout.fillHeight: true; width: 1; color: "#3b383e" }
+        Rectangle { Layout.fillHeight: true; width: 1; color: Theme.border }
 
         // Right: Live status (40%)
         ColumnLayout {
@@ -307,7 +308,7 @@ Item {
                 font.pixelSize: 11
                 font.weight: Font.Bold
                 font.letterSpacing: 1.5
-                color: "#a09da6"
+                color: Theme.textSecondary
             }
 
             GridLayout {
@@ -315,37 +316,37 @@ Item {
                 columnSpacing: 16
                 rowSpacing: 8
 
-                Label { text: "Motor:"; color: "#a09da6" }
+                Label { text: "Motor:"; color: Theme.textSecondary }
                 Label {
                     text: alice && alice.motorConnected ? "Connected" : "Disconnected"
-                    color: alice && alice.motorConnected ? "#64ff64" : "#f2b8b5"
+                    color: alice && alice.motorConnected ? Theme.success : Theme.dangerText
                 }
 
-                Label { text: "RealSense:"; color: "#a09da6" }
+                Label { text: "RealSense:"; color: Theme.textSecondary }
                 Label {
                     text: alice && alice.realSenseConnected ? "Connected" : "Disconnected"
-                    color: alice && alice.realSenseConnected ? "#64ff64" : "#f2b8b5"
+                    color: alice && alice.realSenseConnected ? Theme.success : Theme.dangerText
                 }
 
-                Label { text: "Sync:"; color: "#a09da6" }
+                Label { text: "Sync:"; color: Theme.textSecondary }
                 Label {
                     text: alice && alice.syncClientConnected ? "Client connected" :
                           alice && alice.syncServerRunning ? "Waiting for client" : "Server off"
-                    color: alice && alice.syncClientConnected ? "#64ff64" : "#a09da6"
+                    color: alice && alice.syncClientConnected ? Theme.success : Theme.textSecondary
                 }
 
-                Label { text: "Depth:"; color: "#a09da6" }
+                Label { text: "Depth:"; color: Theme.textSecondary }
                 Label {
                     text: alice && alice.depth > 0 ? alice.depth.toFixed(3) + " m" : "—"
-                    font.family: "RobotoMono"
-                    color: "#e6e1e5"
+                    font.family: Theme.fontFamilyMono
+                    color: Theme.textPrimary
                 }
 
-                Label { text: "Motor Pos:"; color: "#a09da6" }
+                Label { text: "Motor Pos:"; color: Theme.textSecondary }
                 Label {
                     text: (alice ? alice.motorPosition : 0).toString()
-                    font.family: "RobotoMono"
-                    color: "#e6e1e5"
+                    font.family: Theme.fontFamilyMono
+                    color: Theme.textPrimary
                 }
             }
 

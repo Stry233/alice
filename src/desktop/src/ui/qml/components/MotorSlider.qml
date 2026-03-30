@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -18,7 +19,7 @@ ColumnLayout {
         stepSize: 1
         value: motorSlider.motorPos
         live: true
-        Material.accent: "#d0bcff"
+        Material.accent: Theme.primary
 
         onMoved: motorSlider.motorMoved(Math.round(value))
 
@@ -41,21 +42,21 @@ ColumnLayout {
         Label {
             text: "0"
             font.pixelSize: 10
-            color: "#a09da6"
+            color: Theme.textSecondary
         }
         Item { Layout.fillWidth: true }
         Label {
             text: Math.round(slider.value).toString()
-            font.family: "RobotoMono"
+            font.family: Theme.fontFamilyMono
             font.pixelSize: 13
             font.weight: Font.Bold
-            color: "#d0bcff"
+            color: Theme.primary
         }
         Item { Layout.fillWidth: true }
         Label {
             text: "4095"
             font.pixelSize: 10
-            color: "#a09da6"
+            color: Theme.textSecondary
         }
     }
 

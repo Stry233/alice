@@ -15,11 +15,11 @@ ApplicationWindow {
     title: "Alice Studio"
 
     Material.theme: Material.Dark
-    Material.primary: "#6650a4"
-    Material.accent: "#625b71"
-    Material.background: "#1c1b1f"
+    Material.primary: Theme.primary
+    Material.accent: Theme.primary
+    Material.background: Theme.bg
 
-    color: "#1c1b1f"
+    color: Theme.bg
 
     // Navigation
     property int currentView: 0  // 0=Camera, 1=Calibration, 2=Settings, 3=Connection
@@ -39,8 +39,8 @@ ApplicationWindow {
         // Top toolbar
         ToolBar {
             Layout.fillWidth: true
-            height: 48
-            Material.background: "#2b2930"
+            height: 40
+            Material.background: Theme.elevated
 
             RowLayout {
                 anchors.fill: parent
@@ -52,7 +52,7 @@ ApplicationWindow {
                     font.pixelSize: 16
                     font.weight: Font.Bold
                     font.letterSpacing: 2
-                    color: "#d0bcff"
+                    color: Theme.primary
                 }
 
                 Item { Layout.fillWidth: true }
@@ -62,7 +62,7 @@ ApplicationWindow {
                     id: viewTabs
                     currentIndex: currentView
                     onCurrentIndexChanged: currentView = currentIndex
-                    Material.accent: "#d0bcff"
+                    Material.accent: Theme.primary
 
                     TabButton { text: "Camera"; width: implicitWidth }
                     TabButton { text: "Calibration"; width: implicitWidth }

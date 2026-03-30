@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -17,14 +18,14 @@ Item {
             text: "LAN Connection"
             font.pixelSize: 24
             font.weight: Font.Bold
-            color: "#e6e1e5"
+            color: Theme.textPrimary
             Layout.alignment: Qt.AlignHCenter
         }
 
         Label {
             text: "Connect your Android device to this PC over the local network"
             font.pixelSize: 14
-            color: "#a09da6"
+            color: Theme.textSecondary
             wrapMode: Text.WordWrap
             Layout.alignment: Qt.AlignHCenter
             Layout.maximumWidth: 400
@@ -38,7 +39,7 @@ Item {
 
             Button {
                 text: alice && alice.syncServerRunning ? "Stop Server" : "Start Server"
-                Material.background: alice && alice.syncServerRunning ? "#f2b8b5" : "#6650a4"
+                Material.background: alice && alice.syncServerRunning ? Theme.dangerText : Theme.primary
                 onClicked: {
                     if (!alice) return;
                     if (alice.syncServerRunning) alice.stopSyncServer()
@@ -50,7 +51,7 @@ Item {
                 text: alice && alice.syncServerRunning
                       ? "Listening on " + alice.syncQrPayload
                       : "Server not running"
-                color: alice && alice.syncServerRunning ? "#64ff64" : "#a09da6"
+                color: alice && alice.syncServerRunning ? Theme.success : Theme.textSecondary
                 font.pixelSize: 12
             }
         }
@@ -61,7 +62,7 @@ Item {
             width: 280
             height: 280
             color: "#ffffff"
-            radius: 8
+            radius: Theme.radiusLg
             visible: alice && alice.syncServerRunning
 
             // QR code rendered via VideoRenderer (accepts QImage)
@@ -78,7 +79,7 @@ Item {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: "Scan with Alice Android app"
                 font.pixelSize: 12
-                color: "#a09da6"
+                color: Theme.textSecondary
             }
         }
 
@@ -87,8 +88,8 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             width: 300
             height: 60
-            radius: 8
-            color: alice && alice.syncClientConnected ? "#1b4332" : "#2b2930"
+            radius: Theme.radiusLg
+            color: alice && alice.syncClientConnected ? Theme.successMuted : Theme.elevated
             visible: alice && alice.syncServerRunning
 
             RowLayout {
@@ -97,7 +98,7 @@ Item {
 
                 Rectangle {
                     width: 12; height: 12; radius: 6
-                    color: alice && alice.syncClientConnected ? "#64ff64" : "#ffc832"
+                    color: alice && alice.syncClientConnected ? Theme.success : Theme.warning
 
                     SequentialAnimation on opacity {
                         running: alice ? (!alice.syncClientConnected && alice.syncServerRunning) : false
@@ -109,7 +110,7 @@ Item {
 
                 Label {
                     text: alice && alice.syncClientConnected ? "Android device connected" : "Waiting for connection..."
-                    color: "#e6e1e5"
+                    color: Theme.textPrimary
                     font.pixelSize: 14
                 }
             }
@@ -120,8 +121,8 @@ Item {
             Layout.alignment: Qt.AlignHCenter
             width: Math.min(parent.width * 0.6, 500)
             height: txColumn.implicitHeight + 32
-            radius: 8
-            color: "#2b2930"
+            radius: Theme.radiusLg
+            color: Theme.elevated
 
             ColumnLayout {
                 id: txColumn
@@ -134,25 +135,25 @@ Item {
                     font.pixelSize: 11
                     font.weight: Font.Bold
                     font.letterSpacing: 1.5
-                    color: "#a09da6"
+                    color: Theme.textSecondary
                 }
 
                 // Depth/Color Quality
                 RowLayout {
                     Layout.fillWidth: true
-                    Label { text: "Depth/Color Quality"; color: "#e6e1e5"; Layout.preferredWidth: 150 }
+                    Label { text: "Depth/Color Quality"; color: Theme.textPrimary; Layout.preferredWidth: 150 }
                     Slider {
                         Layout.fillWidth: true
                         from: 10; to: 100; stepSize: 5
                         value: alice ? alice.txQualityDepth : 85
                         onMoved: { if (alice) alice.txQualityDepth = value }
-                        Material.accent: "#d0bcff"
+                        Material.accent: Theme.primary
                     }
                     Label {
                         text: alice ? alice.txQualityDepth.toString() : "85"
-                        font.family: "RobotoMono"
+                        font.family: Theme.fontFamilyMono
                         font.pixelSize: 12
-                        color: "#d0bcff"
+                        color: Theme.primary
                         Layout.preferredWidth: 30
                     }
                 }
@@ -160,19 +161,19 @@ Item {
                 // Camera Quality
                 RowLayout {
                     Layout.fillWidth: true
-                    Label { text: "Camera Quality"; color: "#e6e1e5"; Layout.preferredWidth: 150 }
+                    Label { text: "Camera Quality"; color: Theme.textPrimary; Layout.preferredWidth: 150 }
                     Slider {
                         Layout.fillWidth: true
                         from: 10; to: 100; stepSize: 5
                         value: alice ? alice.txQualityCapture : 80
                         onMoved: { if (alice) alice.txQualityCapture = value }
-                        Material.accent: "#d0bcff"
+                        Material.accent: Theme.primary
                     }
                     Label {
                         text: alice ? alice.txQualityCapture.toString() : "80"
-                        font.family: "RobotoMono"
+                        font.family: Theme.fontFamilyMono
                         font.pixelSize: 12
-                        color: "#d0bcff"
+                        color: Theme.primary
                         Layout.preferredWidth: 30
                     }
                 }
@@ -180,19 +181,19 @@ Item {
                 // Max FPS
                 RowLayout {
                     Layout.fillWidth: true
-                    Label { text: "Max FPS"; color: "#e6e1e5"; Layout.preferredWidth: 150 }
+                    Label { text: "Max FPS"; color: Theme.textPrimary; Layout.preferredWidth: 150 }
                     Slider {
                         Layout.fillWidth: true
                         from: 5; to: 60; stepSize: 5
                         value: alice ? alice.txMaxFps : 30
                         onMoved: { if (alice) alice.txMaxFps = value }
-                        Material.accent: "#d0bcff"
+                        Material.accent: Theme.primary
                     }
                     Label {
                         text: alice ? alice.txMaxFps.toString() : "30"
-                        font.family: "RobotoMono"
+                        font.family: Theme.fontFamilyMono
                         font.pixelSize: 12
-                        color: "#d0bcff"
+                        color: Theme.primary
                         Layout.preferredWidth: 30
                     }
                 }
@@ -205,11 +206,11 @@ Item {
             visible: alice && alice.syncServerRunning
             spacing: 8
 
-            Label { text: "Manual:"; color: "#a09da6"; font.pixelSize: 12 }
+            Label { text: "Manual:"; color: Theme.textSecondary; font.pixelSize: 12 }
             Label {
                 text: alice ? alice.syncQrPayload : ""
-                color: "#d0bcff"
-                font.family: "RobotoMono"
+                color: Theme.primary
+                font.family: Theme.fontFamilyMono
                 font.pixelSize: 11
             }
         }

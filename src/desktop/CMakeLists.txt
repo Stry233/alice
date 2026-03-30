@@ -112,17 +112,25 @@ qt_add_qml_module(alice_ui
         src/ui/HistogramRenderer.h src/ui/HistogramRenderer.cpp
     QML_FILES
         src/ui/qml/Main.qml
+        src/ui/qml/Theme.qml
         src/ui/qml/CameraView.qml
         src/ui/qml/ControlPanel.qml
         src/ui/qml/TelemetryPanel.qml
         src/ui/qml/CalibrationView.qml
         src/ui/qml/SettingsView.qml
         src/ui/qml/ConnectionDialog.qml
+        src/ui/qml/components/AppCard.qml
+        src/ui/qml/components/SectionHeader.qml
+        src/ui/qml/components/DataLabel.qml
         src/ui/qml/components/StatusBadge.qml
         src/ui/qml/components/FocusModeSelector.qml
         src/ui/qml/components/MotorSlider.qml
         src/ui/qml/components/LogDisplay.qml
     RESOURCES
+        assets/fonts/Inter-Regular.ttf
+        assets/fonts/Inter-Medium.ttf
+        assets/fonts/Inter-SemiBold.ttf
+        assets/fonts/Inter-Bold.ttf
         assets/fonts/RobotoMono-Regular.ttf
         assets/alice_icon.png
 )

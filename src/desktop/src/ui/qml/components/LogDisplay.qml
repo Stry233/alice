@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -18,13 +19,13 @@ Item {
                 font.pixelSize: 11
                 font.weight: Font.Bold
                 font.letterSpacing: 1.5
-                color: "#a09da6"
+                color: Theme.textSecondary
             }
             Item { Layout.fillWidth: true }
             Label {
                 text: messages.length + " entries"
                 font.pixelSize: 10
-                color: "#a09da6"
+                color: Theme.textSecondary
             }
         }
 
@@ -40,16 +41,16 @@ Item {
                 required property int index
                 width: logList.width
                 text: modelData
-                font.family: "RobotoMono"
+                font.family: Theme.fontFamilyMono
                 font.pixelSize: 11
                 wrapMode: Text.NoWrap
                 elide: Text.ElideRight
 
                 color: {
-                    if (modelData.indexOf("[ERROR]") !== -1) return "#f2b8b5"
-                    if (modelData.indexOf("[WARNING]") !== -1) return "#ffc832"
-                    if (modelData.indexOf("[DEBUG]") !== -1) return "#6b6774"
-                    return "#a09da6"
+                    if (modelData.indexOf("[ERROR]") !== -1) return Theme.dangerText
+                    if (modelData.indexOf("[WARNING]") !== -1) return Theme.warning
+                    if (modelData.indexOf("[DEBUG]") !== -1) return Theme.textDisabled
+                    return Theme.textSecondary
                 }
             }
 

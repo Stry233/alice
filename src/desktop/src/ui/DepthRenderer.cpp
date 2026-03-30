@@ -39,10 +39,10 @@ void DepthRenderer::paint(QPainter *painter) {
         textRect.adjust(-6, -4, 6, 4);
 
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(0, 0, 0, 160));
-        painter->drawRoundedRect(textRect, 4, 4);
+        painter->setBrush(QColor(27, 32, 37, 200));
+        painter->drawRoundedRect(textRect, 2, 2);
 
-        painter->setPen(confidence_ > 0.7f ? QColor(100, 255, 100) : QColor(255, 200, 50));
+        painter->setPen(confidence_ > 0.7f ? QColor(21, 179, 113) : QColor(217, 130, 43));
         painter->drawText(textRect, Qt::AlignCenter, text);
     }
 }

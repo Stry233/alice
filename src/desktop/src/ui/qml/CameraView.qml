@@ -34,14 +34,14 @@ Item {
                 // Placeholder when no capture card is connected
                 Rectangle {
                     anchors.fill: parent
-                    color: "#1a1a1a"
+                    color: Theme.well
                     visible: alice ? !alice.captureCardConnected : true
 
                     Label {
                         anchors.centerIn: parent
                         text: "No camera"
                         font.pixelSize: 18
-                        color: "#888888"
+                        color: Theme.textPlaceholder
                     }
                 }
 
@@ -87,21 +87,21 @@ Item {
                 // Dark background when no RealSense connected
                 Rectangle {
                     anchors.fill: parent
-                    color: "#1a1a1a"
+                    color: Theme.well
                     visible: alice ? (!alice.realSenseConnected && alice.depth <= 0) : true
 
                     Label {
                         anchors.centerIn: parent
                         text: "No depth"
                         font.pixelSize: 14
-                        color: "#888888"
+                        color: Theme.textPlaceholder
                     }
                 }
 
                 // Number-only depth display when no RealSense but depth data is available (remote sync)
                 Rectangle {
                     anchors.fill: parent
-                    color: "#1a1a1a"
+                    color: Theme.well
                     visible: alice ? (!alice.realSenseConnected && alice.depth > 0) : false
 
                     Column {
@@ -111,18 +111,18 @@ Item {
                         Label {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: alice ? alice.depth.toFixed(2) + "m" : ""
-                            font.family: "RobotoMono"
+                            font.family: Theme.fontFamilyMono
                             font.pixelSize: 36
                             font.bold: true
-                            color: alice ? (alice.depthConfidence > 0.7 ? "#64ff64" : "#ffc832") : "#ffc832"
+                            color: alice ? (alice.depthConfidence > 0.7 ? Theme.success : Theme.warning) : Theme.warning
                         }
 
                         Label {
                             anchors.horizontalCenter: parent.horizontalCenter
                             text: alice ? Math.round(alice.depthConfidence * 100) + "% confidence" : ""
-                            font.family: "RobotoMono"
+                            font.family: Theme.fontFamilyMono
                             font.pixelSize: 14
-                            color: "#aaaaaa"
+                            color: Theme.textSecondary
                         }
                     }
                 }
@@ -144,17 +144,17 @@ Item {
                     anchors.margins: 8
                     width: depthReadout.implicitWidth + 12
                     height: depthReadout.implicitHeight + 8
-                    radius: 4
-                    color: "#a0000000"
+                    radius: Theme.radiusSm
+                    color: Qt.rgba(0.106, 0.125, 0.145, 0.85)
                     visible: alice ? (alice.realSenseConnected && alice.depth > 0) : false
 
                     Label {
                         id: depthReadout
                         anchors.centerIn: parent
                         text: alice ? (alice.depth.toFixed(2) + "m (" + Math.round(alice.depthConfidence * 100) + "%)") : ""
-                        font.family: "RobotoMono"
+                        font.family: Theme.fontFamilyMono
                         font.pixelSize: 12
-                        color: alice ? (alice.depthConfidence > 0.7 ? "#64ff64" : "#ffc832") : "#ffc832"
+                        color: alice ? (alice.depthConfidence > 0.7 ? Theme.success : Theme.warning) : Theme.warning
                     }
                 }
 

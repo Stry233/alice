@@ -6,7 +6,7 @@ import QtQuick.Layouts
 import QtQuick.Dialogs
 
 Rectangle {
-    color: "#2b2930"
+    color: Theme.elevated
 
     FileDialog {
         id: fileDialog
@@ -29,7 +29,7 @@ Rectangle {
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 1.5
-            color: "#a09da6"
+            color: Theme.textSecondary
         }
 
         FocusModeSelector {
@@ -44,14 +44,14 @@ Rectangle {
             Layout.fillWidth: true
             Label {
                 text: "Autofocus"
-                color: "#e6e1e5"
+                color: Theme.textPrimary
                 Layout.fillWidth: true
             }
             Switch {
                 checked: alice ? alice.autofocusEnabled : false
                 onToggled: { if (!alice) return; alice.autofocusEnabled = checked }
                 enabled: alice ? alice.hasMapping : false
-                Material.accent: "#d0bcff"
+                Material.accent: Theme.primary
             }
         }
 
@@ -60,13 +60,13 @@ Rectangle {
             Layout.fillWidth: true
             height: 4
             radius: 2
-            color: alice && alice.activelyFocusing ? "#64ff64" : "#3b383e"
+            color: alice && alice.activelyFocusing ? Theme.success : Theme.border
 
-            Behavior on color { ColorAnimation { duration: 200 } }
+            Behavior on color { ColorAnimation { duration: 150 } }
         }
 
         // Separator
-        Rectangle { Layout.fillWidth: true; height: 1; color: "#3b383e" }
+        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
         // Motor control
         Label {
@@ -74,7 +74,7 @@ Rectangle {
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 1.5
-            color: "#a09da6"
+            color: Theme.textSecondary
         }
 
         MotorSlider {
@@ -89,7 +89,7 @@ Rectangle {
         }
 
         // Separator
-        Rectangle { Layout.fillWidth: true; height: 1; color: "#3b383e" }
+        Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
         // Mapping controls
         Label {
@@ -97,7 +97,7 @@ Rectangle {
             font.pixelSize: 11
             font.weight: Font.Bold
             font.letterSpacing: 1.5
-            color: "#a09da6"
+            color: Theme.textSecondary
         }
 
         // Active mapping indicator
@@ -105,7 +105,7 @@ Rectangle {
             visible: alice ? alice.hasMapping : false
             text: alice ? ("Active: " + alice.mappingName) : ""
             font.pixelSize: 12
-            color: "#64ff64"
+            color: Theme.success
             Layout.fillWidth: true
             elide: Text.ElideRight
         }
@@ -115,7 +115,7 @@ Rectangle {
             Layout.fillWidth: true
             model: ["Select Preset...", "Linear", "Logarithmic", "Portrait", "Landscape", "Macro"]
             currentIndex: 0
-            Material.accent: "#d0bcff"
+            Material.accent: Theme.primary
             onActivated: (index) => {
                 if (!alice) return;
                 if (index > 0) {
@@ -136,7 +136,7 @@ Rectangle {
             Layout.fillWidth: true
             flat: true
             enabled: alice ? alice.hasMapping : false
-            Material.foreground: "#f2b8b5"
+            Material.foreground: Theme.dangerText
             onClicked: { if (!alice) return; alice.clearMapping() }
         }
 

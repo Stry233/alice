@@ -27,7 +27,7 @@ Item {
                 font.pixelSize: 11
                 font.weight: Font.Bold
                 font.letterSpacing: 1.5
-                color: "#a09da6"
+                color: Theme.textSecondary
             }
 
             MotorSlider {
@@ -41,7 +41,7 @@ Item {
                 text: "Test mode"
                 checked: testMode
                 onToggled: testMode = checked
-                Material.accent: "#d0bcff"
+                Material.accent: Theme.primary
             }
 
             Button {
@@ -49,7 +49,7 @@ Item {
                 Layout.fillWidth: true
                 enabled: alice ? (alice.motorConnected && alice.realSenseConnected && !testMode &&
                          alice.depth > 0 && alice.depthConfidence >= 0.5) : false
-                Material.background: "#6650a4"
+                Material.background: Theme.primary
                 onClicked: {
                     if (!alice) return;
                     calibrationPoints.push({
@@ -65,7 +65,7 @@ Item {
                 text: calibrationPoints.length >= 3
                       ? calibrationPoints.length + " points recorded"
                       : (3 - calibrationPoints.length) + " more needed"
-                color: calibrationPoints.length >= 3 ? "#64ff64" : "#ffc832"
+                color: calibrationPoints.length >= 3 ? Theme.success : Theme.warning
                 font.pixelSize: 12
             }
 
@@ -73,8 +73,8 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#1e1c22"
-                radius: 4
+                color: Theme.surface
+                radius: Theme.radiusLg
 
                 ListView {
                     anchors.fill: parent
@@ -85,16 +85,16 @@ Item {
                         width: parent ? parent.width : 0
                         Label {
                             text: modelData.depth.toFixed(2) + "m"
-                            font.family: "RobotoMono"
+                            font.family: Theme.fontFamilyMono
                             font.pixelSize: 11
-                            color: "#e6e1e5"
+                            color: Theme.textPrimary
                         }
                         Item { Layout.fillWidth: true }
                         Label {
                             text: "→ " + modelData.motorPosition
-                            font.family: "RobotoMono"
+                            font.family: Theme.fontFamilyMono
                             font.pixelSize: 11
-                            color: "#d0bcff"
+                            color: Theme.primary
                         }
                     }
                 }
@@ -111,8 +111,8 @@ Item {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: "#000000"
-                radius: 4
+                color: Theme.well
+                radius: Theme.radiusLg
 
                 VideoRenderer {
                     anchors.fill: parent
@@ -124,7 +124,7 @@ Item {
                     anchors.centerIn: parent
                     text: "No camera"
                     font.pixelSize: 14
-                    color: "#888888"
+                    color: Theme.textPlaceholder
                     visible: alice ? !alice.captureCardConnected : true
                 }
 
@@ -134,7 +134,7 @@ Item {
                     anchors.margins: 8
                     text: "Camera Preview"
                     font.pixelSize: 11
-                    color: "#a09da6"
+                    color: Theme.textSecondary
                 }
             }
 
@@ -143,8 +143,8 @@ Item {
                 Layout.fillWidth: true
                 Layout.preferredHeight: width * 3 / 4
                 Layout.maximumHeight: 360
-                color: "#000000"
-                radius: 4
+                color: Theme.well
+                radius: Theme.radiusLg
                 clip: true
 
                 // No-device placeholder
@@ -152,7 +152,7 @@ Item {
                     anchors.centerIn: parent
                     text: "No depth"
                     font.pixelSize: 14
-                    color: "#888888"
+                    color: Theme.textPlaceholder
                     visible: !(alice && alice.realSenseConnected)
                 }
 
@@ -173,17 +173,17 @@ Item {
                     anchors.margins: 8
                     width: calibDepthReadout.implicitWidth + 12
                     height: calibDepthReadout.implicitHeight + 8
-                    radius: 4
-                    color: "#a0000000"
+                    radius: Theme.radiusSm
+                    color: Qt.rgba(0.106, 0.125, 0.145, 0.85)
                     visible: alice ? (alice.realSenseConnected && alice.depth > 0) : false
 
                     Label {
                         id: calibDepthReadout
                         anchors.centerIn: parent
                         text: alice ? (alice.depth.toFixed(2) + "m (" + Math.round(alice.depthConfidence * 100) + "%)") : ""
-                        font.family: "RobotoMono"
+                        font.family: Theme.fontFamilyMono
                         font.pixelSize: 12
-                        color: alice ? (alice.depthConfidence > 0.7 ? "#64ff64" : "#ffc832") : "#ffc832"
+                        color: alice ? (alice.depthConfidence > 0.7 ? Theme.success : Theme.warning) : Theme.warning
                     }
                 }
 
@@ -249,7 +249,7 @@ Item {
                     anchors.margins: 8
                     text: "Depth Preview"
                     font.pixelSize: 11
-                    color: "#a09da6"
+                    color: Theme.textSecondary
                 }
             }
         }
@@ -258,8 +258,8 @@ Item {
         Rectangle {
             Layout.preferredWidth: calibView.width * 0.22
             Layout.fillHeight: true
-            color: "#1e1c22"
-            radius: 4
+            color: Theme.surface
+            radius: Theme.radiusLg
 
             ColumnLayout {
                 anchors.fill: parent
@@ -271,7 +271,7 @@ Item {
                     font.pixelSize: 11
                     font.weight: Font.Bold
                     font.letterSpacing: 1.5
-                    color: "#a09da6"
+                    color: Theme.textSecondary
                 }
 
                 // Graph canvas
@@ -284,7 +284,7 @@ Item {
                         ctx.clearRect(0, 0, width, height)
 
                         // Background grid
-                        ctx.strokeStyle = "#3b383e"
+                        ctx.strokeStyle = Theme.border
                         ctx.lineWidth = 0.5
                         for (var i = 0; i <= 4; i++) {
                             var x = (i / 4) * width
@@ -299,7 +299,7 @@ Item {
                         var maxDepth = 10.0
                         var maxMotor = 4095
 
-                        ctx.fillStyle = "#d0bcff"
+                        ctx.fillStyle = Theme.primary
                         for (var j = 0; j < calibrationPoints.length; j++) {
                             var pt = calibrationPoints[j]
                             var px = (pt.motorPosition / maxMotor) * width
@@ -312,7 +312,7 @@ Item {
                         // Connect with line
                         if (calibrationPoints.length >= 2) {
                             var sorted = calibrationPoints.slice().sort((a, b) => a.depth - b.depth)
-                            ctx.strokeStyle = "#d0bcff"
+                            ctx.strokeStyle = Theme.primary
                             ctx.lineWidth = 1.5
                             ctx.beginPath()
                             for (var k = 0; k < sorted.length; k++) {
@@ -332,7 +332,7 @@ Item {
                     text: "Export Mapping"
                     Layout.fillWidth: true
                     enabled: calibrationPoints.length >= 3
-                    Material.background: "#6650a4"
+                    Material.background: Theme.primary
                     onClicked: exportDialog.open()
                 }
 
@@ -340,7 +340,7 @@ Item {
                     text: "Clear All"
                     Layout.fillWidth: true
                     flat: true
-                    Material.foreground: "#f2b8b5"
+                    Material.foreground: Theme.dangerText
                     onClicked: {
                         calibrationPoints = []
                         graphCanvas.requestPaint()

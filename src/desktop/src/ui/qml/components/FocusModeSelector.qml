@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -27,13 +28,13 @@ RowLayout {
             flat: !checked
             enabled: modeSelector.enabled
 
-            Material.background: checked ? "#6650a4" : "transparent"
+            Material.background: checked ? Theme.primary : "transparent"
 
             contentItem: Label {
                 text: modelData.label
-                color: !modeSelector.enabled ? "#555555"
+                color: !modeSelector.enabled ? Theme.textDisabled
                      : checked ? "#ffffff"
-                     : "#a09da6"
+                     : Theme.textSecondary
                 horizontalAlignment: Text.AlignHCenter
                 verticalAlignment: Text.AlignVCenter
                 font: parent.font
@@ -41,7 +42,7 @@ RowLayout {
 
             ToolTip.text: modelData.tooltip
             ToolTip.visible: hovered
-            ToolTip.delay: 500
+            ToolTip.delay: 150
 
             onClicked: modeSelector.modeChanged(modelData.mode)
         }
