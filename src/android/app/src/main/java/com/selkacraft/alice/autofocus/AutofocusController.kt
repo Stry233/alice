@@ -177,6 +177,16 @@ class AutofocusController(
     }
 
     /**
+     * Load a mapping object directly (e.g., received from remote sync).
+     */
+    fun loadMappingDirect(mapping: AutofocusMapping) {
+        setMapping(mapping)
+        scope.launch {
+            _events.emit(AutofocusEvent.MappingLoaded(mapping.name))
+        }
+    }
+
+    /**
      * Clear current mapping
      */
     fun clearMapping() {

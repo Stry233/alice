@@ -52,6 +52,7 @@ import androidx.navigation.compose.rememberNavController
 import com.selkacraft.alice.ui.screens.calibration.CalibrationScreen
 import com.selkacraft.alice.ui.screens.camera.CameraScreen
 import com.selkacraft.alice.ui.screens.motordiscovery.MotorDiscoveryScreen
+import com.selkacraft.alice.ui.screens.connection.QrScannerScreen
 import com.selkacraft.alice.ui.screens.settings.SettingsScreen
 import com.selkacraft.alice.ui.screens.welcome.WelcomeScreen
 import com.selkacraft.alice.ui.theme.AliceTheme
@@ -280,6 +281,24 @@ class MainActivity : ComponentActivity() {
                             MotorDiscoveryScreen(
                                 navController = navController,
                                 viewModel = viewModel
+                            )
+                        }
+
+                        composable(
+                            "qr_scanner",
+                            enterTransition = settingsEnterTransition,
+                            exitTransition = settingsPopExitTransition,
+                            popEnterTransition = settingsEnterTransition,
+                            popExitTransition = settingsPopExitTransition
+                        ) {
+                            Log.i(TAG, "Navigating to 'qr_scanner' screen.")
+                            QrScannerScreen(
+                                onConnectionData = { ip, port, token ->
+                                    Log.i(TAG, "QR scanned: $ip:$port, connecting...")
+                                    viewModel.connectToDesktop(ip, port, token)
+                                    navController.popBackStack()
+                                },
+                                onBack = { navController.popBackStack() }
                             )
                         }
                     }

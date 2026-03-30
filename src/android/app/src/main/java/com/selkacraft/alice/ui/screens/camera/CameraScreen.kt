@@ -4,7 +4,13 @@ import android.util.Log
 import android.view.SurfaceHolder
 import androidx.compose.animation.*
 import androidx.compose.animation.core.*
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -17,11 +23,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Popup
+import androidx.compose.ui.window.PopupProperties
 import com.selkacraft.alice.comm.autofocus.FocusMode
 import com.selkacraft.alice.comm.core.ConnectionState
 import com.selkacraft.alice.ui.screens.camera.components.CameraPreview
@@ -29,6 +40,7 @@ import com.selkacraft.alice.ui.screens.camera.components.DeviceStatusIndicator
 import com.selkacraft.alice.ui.screens.camera.components.MotorControlSlider
 import com.selkacraft.alice.ui.screens.camera.components.RealSenseOverlay
 import com.selkacraft.alice.util.CameraViewModel
+import com.selkacraft.alice.util.CameraViewModel.DataSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -47,33 +59,39 @@ fun CameraScreen(
 
     // Device connection states
     val motorConnectionState by viewModel.motorConnectionState.collectAsState()
-    val motorPosition by viewModel.motorPosition.collectAsState()
+    val motorPosition by viewModel.effectiveMotorPosition.collectAsState()
     val coordinatorState by viewModel.coordinatorState.collectAsState()
     val cameraState by viewModel.cameraState.collectAsState()
     val cameraConnectionState by viewModel.cameraConnectionState.collectAsState()
     val isChangingResolution by viewModel.isChangingResolution.collectAsState()
 
-    // RealSense states
+    // Effective (unified) states — local hardware or remote desktop
+    val effectiveMotorConnected by viewModel.effectiveMotorConnected.collectAsState()
+    val effectiveRealSenseConnected by viewModel.effectiveRealSenseConnected.collectAsState()
+    val effectiveDataSource by viewModel.effectiveDataSource.collectAsState()
+
+    // RealSense states (unified)
     val realSenseConnectionState by viewModel.realSenseConnectionState.collectAsState()
-    val realSenseCenterDepth by viewModel.realSenseCenterDepth.collectAsState()
-    val realSenseDepthConfidence by viewModel.realSenseDepthConfidence.collectAsState()
-    val realSenseDepthBitmap by viewModel.realSenseDepthBitmap.collectAsState()
+    val realSenseCenterDepth by viewModel.effectiveDepth.collectAsState()
+    val realSenseDepthConfidence by viewModel.effectiveDepthConfidence.collectAsState()
+    val realSenseDepthBitmap by viewModel.effectiveDepthBitmap.collectAsState()
 
     // Autofocus states
-    val autofocusEnabled by viewModel.autofocusEnabled.collectAsState()
+    val autofocusEnabled by viewModel.effectiveAutofocusEnabled.collectAsState()
     val autofocusMode by viewModel.autofocusMode.collectAsState()
     val autofocusMapping by viewModel.autofocusMapping.collectAsState()
     val isAutofocusActive by viewModel.isAutofocusActive.collectAsState()
 
     // Face detection states
     val faceDetectionState by viewModel.faceDetectionState.collectAsState()
-    val colorBitmap by viewModel.realSenseColorBitmap.collectAsState()
+    val colorBitmap by viewModel.effectiveColorBitmap.collectAsState()
 
-    // Check if autofocus is available (mapping loaded + both devices connected)
-    val isAutofocusAvailable = remember(autofocusMapping, motorConnectionState, realSenseConnectionState) {
-        autofocusMapping != null &&
-                (motorConnectionState is ConnectionState.Connected || motorConnectionState is ConnectionState.Active) &&
-                (realSenseConnectionState is ConnectionState.Connected || realSenseConnectionState is ConnectionState.Active)
+    // Effective camera frame (null = local Surface active, Bitmap = remote stream)
+    val effectiveCameraFrame by viewModel.effectiveCameraFrame.collectAsState()
+
+    // Check if autofocus is available (mapping loaded + both devices connected locally or remotely)
+    val isAutofocusAvailable = remember(autofocusMapping, effectiveMotorConnected, effectiveRealSenseConnected) {
+        autofocusMapping != null && effectiveMotorConnected && effectiveRealSenseConnected
     }
 
     // Keep track of navigation state
@@ -143,90 +161,65 @@ fun CameraScreen(
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // Motor control slider (appears above FAB when connected)
+                // Motor control slider (appears above FAB when connected — local or remote)
                 MotorControlSlider(
                     connectionState = motorConnectionState,
                     currentPosition = motorPosition,
                     onPositionChange = { position ->
                         // When user manually controls motor, it will automatically disable autofocus
                         viewModel.setMotorPosition(position, isManualControl = true)
-                    }
+                    },
+                    isEffectivelyConnected = effectiveMotorConnected
                 )
 
-                // Expandable FAB menu when autofocus is available
-                if (isAutofocusAvailable) {
-                    ExpandableAutofocusFab(
-                        isExpanded = isFabExpanded,
-                        onExpandChange = { isFabExpanded = it },
-                        currentMode = autofocusMode,
-                        onModeChange = { mode ->
-                            viewModel.settingsManager.setAutofocusMode(mode.name)
-                            viewModel.settingsManager.setAutofocusEnabled(mode != FocusMode.MANUAL)
-                        },
-                        onSettingsClick = {
-                            if (!isChangingResolution) {
-                                Log.d(TAG_CS, "Settings clicked from expandable menu")
-                                isNavigatingToSettings = true
-                                isFabExpanded = false
-
-                                // Before navigating, ensure we have the current surface saved
-                                currentSurfaceHolder?.let { holder ->
-                                    if (holder.surface.isValid) {
-                                        viewModel.setSurface(holder.surface)
-                                    }
-                                }
-
-                                onNavigateToSettings()
-
-                                // Reset navigation flag after delay
-                                coroutineScope.launch {
-                                    delay(1000)
-                                    isNavigatingToSettings = false
+                // Single FAB that adapts behavior based on AF state
+                val showAfFab = isAutofocusAvailable && autofocusEnabled
+                ExpandableAutofocusFab(
+                    isExpanded = isFabExpanded && showAfFab,
+                    onExpandChange = { expanded ->
+                        if (showAfFab) {
+                            isFabExpanded = expanded
+                        } else if (!isChangingResolution) {
+                            // When AF not available, FAB acts as settings button
+                            Log.d(TAG_CS, "Settings FAB clicked.")
+                            isNavigatingToSettings = true
+                            currentSurfaceHolder?.let { holder ->
+                                if (holder.surface.isValid) {
+                                    viewModel.setSurface(holder.surface)
                                 }
                             }
-                        },
-                        isChangingResolution = isChangingResolution
-                    )
-                } else {
-                    // Regular settings FAB when autofocus is not available
-                    FloatingActionButton(
-                        onClick = {
-                            if (!isChangingResolution) {
-                                Log.d(TAG_CS, "Settings FAB clicked.")
-                                isNavigatingToSettings = true
-
-                                // Before navigating, ensure we have the current surface saved
-                                currentSurfaceHolder?.let { holder ->
-                                    if (holder.surface.isValid) {
-                                        viewModel.setSurface(holder.surface)
-                                    }
-                                }
-
-                                onNavigateToSettings()
-
-                                // Reset navigation flag after delay
-                                coroutineScope.launch {
-                                    delay(1000)
-                                    isNavigatingToSettings = false
-                                }
+                            onNavigateToSettings()
+                            coroutineScope.launch {
+                                delay(1000)
+                                isNavigatingToSettings = false
                             }
-                        },
-                        containerColor = if (isChangingResolution) {
-                            MaterialTheme.colorScheme.surfaceVariant
-                        } else {
-                            MaterialTheme.colorScheme.primaryContainer
                         }
-                    ) {
-                        Icon(
-                            imageVector = Icons.Filled.Settings,
-                            contentDescription = if (isChangingResolution) {
-                                "Settings (Resolution changing...)"
-                            } else {
-                                "Open Settings"
+                    },
+                    currentMode = if (showAfFab) autofocusMode else FocusMode.MANUAL,
+                    onModeChange = { mode ->
+                        viewModel.settingsManager.setAutofocusMode(mode.name)
+                        viewModel.settingsManager.setAutofocusEnabled(mode != FocusMode.MANUAL)
+                    },
+                    onSettingsClick = {
+                        if (!isChangingResolution) {
+                            Log.d(TAG_CS, "Settings clicked from expandable menu")
+                            isNavigatingToSettings = true
+                            isFabExpanded = false
+                            currentSurfaceHolder?.let { holder ->
+                                if (holder.surface.isValid) {
+                                    viewModel.setSurface(holder.surface)
+                                }
                             }
-                        )
-                    }
-                }
+                            onNavigateToSettings()
+                            coroutineScope.launch {
+                                delay(1000)
+                                isNavigatingToSettings = false
+                            }
+                        }
+                    },
+                    isChangingResolution = isChangingResolution,
+                    isAfAvailable = showAfFab
+                )
             }
         },
         floatingActionButtonPosition = FabPosition.End
@@ -264,6 +257,39 @@ fun CameraScreen(
                 modifier = Modifier.fillMaxSize()
             )
 
+            // Remote camera frame (shown when local camera isn't active)
+            effectiveCameraFrame?.let { frame ->
+                var remoteScale by remember { mutableFloatStateOf(1f) }
+                var remoteOffsetX by remember { mutableFloatStateOf(0f) }
+                var remoteOffsetY by remember { mutableFloatStateOf(0f) }
+
+                Image(
+                    bitmap = frame.asImageBitmap(),
+                    contentDescription = "Camera Preview",
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = remoteScale
+                            scaleY = remoteScale
+                            translationX = remoteOffsetX
+                            translationY = remoteOffsetY
+                        }
+                        .pointerInput(Unit) {
+                            detectTransformGestures { _, pan, zoom, _ ->
+                                remoteScale = (remoteScale * zoom).coerceIn(1f, 5f)
+                                if (remoteScale > 1f) {
+                                    remoteOffsetX += pan.x
+                                    remoteOffsetY += pan.y
+                                } else {
+                                    remoteOffsetX = 0f
+                                    remoteOffsetY = 0f
+                                }
+                            }
+                        },
+                    contentScale = ContentScale.Fit
+                )
+            }
+
             // Show loading indicator when changing resolution
             if (isChangingResolution) {
                 Card(
@@ -298,10 +324,11 @@ fun CameraScreen(
             DeviceStatusIndicator(
                 connectedDevices = coordinatorState.connectedDevices.size,
                 activeDevices = coordinatorState.activeDevices.size,
-                cameraActive = viewModel.isCameraActive(),
-                motorActive = viewModel.isMotorActive(),
-                realSenseActive = viewModel.isRealSenseActive(),
+                cameraActive = viewModel.isCameraActive() || effectiveCameraFrame != null,
+                motorActive = effectiveMotorConnected,
+                realSenseActive = effectiveRealSenseConnected,
                 totalBandwidthUsed = coordinatorState.totalBandwidthUsed,
+                dataSource = effectiveDataSource,
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(16.dp)
@@ -347,7 +374,7 @@ fun CameraScreen(
                 connectionState = realSenseConnectionState,
                 centerDepth = realSenseCenterDepth,
                 depthConfidence = realSenseDepthConfidence,
-                depthBitmap = realSenseDepthBitmap,
+                depthBitmap = colorBitmap ?: realSenseDepthBitmap,
                 onMeasurementPositionChanged = { x, y ->
                     // This triggers tap-to-focus when enabled
                     viewModel.setRealSenseMeasurementPosition(x, y)
@@ -362,6 +389,18 @@ fun CameraScreen(
                     if (width > 0 && height > 0) {
                         viewModel.selectFaceForFocus(x, y, width, height)
                     }
+                },
+                isEffectivelyConnected = effectiveRealSenseConnected,
+                remoteMeasureX = viewModel.remoteMeasureX.collectAsState().value,
+                remoteMeasureY = viewModel.remoteMeasureY.collectAsState().value,
+                onVisibilityChanged = { visible ->
+                    // Only pause depth/color when the depth panel is hidden.
+                    // Capture card stream stays on — it's the main camera preview.
+                    viewModel.setRemoteStreamEnabled(
+                        color = visible,
+                        depth = visible,
+                        capture = true
+                    )
                 },
                 modifier = Modifier
                     .align(Alignment.BottomStart)
@@ -378,6 +417,7 @@ private fun ExpandableAutofocusFab(
     onModeChange: (FocusMode) -> Unit,
     onSettingsClick: () -> Unit,
     isChangingResolution: Boolean,
+    isAfAvailable: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val hapticFeedback = LocalHapticFeedback.current
@@ -401,127 +441,152 @@ private fun ExpandableAutofocusFab(
         label = "fab_scale"
     )
 
-    // Fixed size box with unbounded content to allow overflow
-    Box(
-        modifier = modifier
-            .size(56.dp)
-            .wrapContentSize(unbounded = true),
-        contentAlignment = Alignment.Center
-    ) {
-        // Expandable menu items - positioned to the left
-        AnimatedVisibility(
-            visible = isExpanded,
-            enter = fadeIn(animationSpec = tween(200)) +
-                    scaleIn(initialScale = 0.8f, animationSpec = tween(300)),
-            exit = fadeOut(animationSpec = tween(200)) +
-                    scaleOut(targetScale = 0.8f, animationSpec = tween(200))
-        ) {
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .wrapContentWidth()
-                    .offset(x = (-220).dp, y = 0.dp)
+    // FAB with menu panel rendered in a Popup (bypasses all parent clipping)
+    Box(modifier = modifier) {
+        // Menu panel in a Popup — floats above the layout hierarchy, no parent clipping
+        val menuSlide by animateDpAsState(
+            targetValue = if (isExpanded) 0.dp else 48.dp,
+            animationSpec = spring(
+                dampingRatio = 0.85f,
+                stiffness = Spring.StiffnessMediumLow
+            ),
+            label = "menu_slide"
+        )
+        val menuAlpha by animateFloatAsState(
+            targetValue = if (isExpanded) 1f else 0f,
+            animationSpec = tween(durationMillis = 200, easing = FastOutSlowInEasing),
+            label = "menu_alpha"
+        )
+        val density = LocalDensity.current
+
+        if (isExpanded || menuAlpha > 0.01f) {
+            Popup(
+                alignment = Alignment.CenterEnd,
+                offset = IntOffset(
+                    with(density) { ((-80).dp + menuSlide).roundToPx() },
+                    0
+                ),
+                properties = PopupProperties(clippingEnabled = false)
             ) {
-                // Autofocus mode selector - Material You segmented button style
-                Surface(
-                    shape = RoundedCornerShape(28.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
-                    tonalElevation = 2.dp,
-                    shadowElevation = 4.dp
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .wrapContentSize()
+                        .graphicsLayer { alpha = menuAlpha }
                 ) {
-                    Row(
-                        modifier = Modifier
-                            .height(48.dp)
-                            .padding(2.dp),
-                        horizontalArrangement = Arrangement.Center,
-                        verticalAlignment = Alignment.CenterVertically
+                    // Autofocus mode selector - Material You segmented button style
+                    Surface(
+                        shape = RoundedCornerShape(28.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                        tonalElevation = 2.dp,
+                        shadowElevation = 4.dp
                     ) {
-                        // Manual Focus
-                        FocusModeSegment(
-                            icon = Icons.Default.PanTool,
-                            label = "MF",
-                            isSelected = currentMode == FocusMode.MANUAL,
-                            position = SegmentPosition.START,
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onModeChange(FocusMode.MANUAL)
-                                onExpandChange(false)
-                            }
-                        )
+                        Row(
+                            modifier = Modifier
+                                .height(48.dp)
+                                .padding(2.dp),
+                            horizontalArrangement = Arrangement.Center,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            FocusModeSegment(
+                                icon = Icons.Default.PanTool,
+                                label = "MF",
+                                isSelected = currentMode == FocusMode.MANUAL,
+                                position = SegmentPosition.START,
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onModeChange(FocusMode.MANUAL)
+                                    onExpandChange(false)
+                                }
+                            )
+                            FocusModeSegment(
+                                icon = Icons.Default.CenterFocusWeak,
+                                label = "AF-S",
+                                isSelected = currentMode == FocusMode.SINGLE_AUTO,
+                                position = SegmentPosition.MIDDLE,
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onModeChange(FocusMode.SINGLE_AUTO)
+                                    onExpandChange(false)
+                                }
+                            )
+                            FocusModeSegment(
+                                icon = Icons.Default.CenterFocusStrong,
+                                label = "AF-C",
+                                isSelected = currentMode == FocusMode.CONTINUOUS_AUTO,
+                                position = SegmentPosition.MIDDLE,
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onModeChange(FocusMode.CONTINUOUS_AUTO)
+                                    onExpandChange(false)
+                                }
+                            )
+                            FocusModeSegment(
+                                icon = Icons.Default.Face,
+                                label = "AF-F",
+                                isSelected = currentMode == FocusMode.FACE_TRACKING,
+                                position = SegmentPosition.END,
+                                onClick = {
+                                    hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    onModeChange(FocusMode.FACE_TRACKING)
+                                    onExpandChange(false)
+                                }
+                            )
+                        }
+                    }
 
-                        // Single Auto
-                        FocusModeSegment(
-                            icon = Icons.Default.CenterFocusWeak,
-                            label = "AF-S",
-                            isSelected = currentMode == FocusMode.SINGLE_AUTO,
-                            position = SegmentPosition.MIDDLE,
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onModeChange(FocusMode.SINGLE_AUTO)
-                                onExpandChange(false)
-                            }
-                        )
+                    // Divider
+                    Box(
+                        modifier = Modifier
+                            .width(1.dp)
+                            .height(32.dp)
+                            .background(
+                                MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                            )
+                    )
 
-                        // Continuous Auto
-                        FocusModeSegment(
-                            icon = Icons.Default.CenterFocusStrong,
-                            label = "AF-C",
-                            isSelected = currentMode == FocusMode.CONTINUOUS_AUTO,
-                            position = SegmentPosition.MIDDLE,
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onModeChange(FocusMode.CONTINUOUS_AUTO)
-                                onExpandChange(false)
-                            }
+                    // Settings button
+                    FilledTonalIconButton(
+                        onClick = {
+                            hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onSettingsClick()
+                        },
+                        modifier = Modifier.size(48.dp),
+                        colors = IconButtonDefaults.filledTonalIconButtonColors(
+                            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
                         )
-
-                        // Face Tracking
-                        FocusModeSegment(
-                            icon = Icons.Default.Face,
-                            label = "AF-F",
-                            isSelected = currentMode == FocusMode.FACE_TRACKING,
-                            position = SegmentPosition.END,
-                            onClick = {
-                                hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                                onModeChange(FocusMode.FACE_TRACKING)
-                                onExpandChange(false)
-                            }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            modifier = Modifier.size(24.dp)
                         )
                     }
-                }
-
-                // Divider
-                Box(
-                    modifier = Modifier
-                        .width(1.dp)
-                        .height(32.dp)
-                        .background(
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        )
-                )
-
-                // Settings button
-                FilledTonalIconButton(
-                    onClick = {
-                        hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
-                        onSettingsClick()
-                    },
-                    modifier = Modifier.size(48.dp),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.95f)
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Settings,
-                        contentDescription = "Settings",
-                        modifier = Modifier.size(24.dp)
-                    )
                 }
             }
         }
 
-        // Main FAB - always centered
+        // Main FAB - always centered, with animated color transitions
+        val targetColor = when {
+            isChangingResolution -> MaterialTheme.colorScheme.surfaceVariant
+            isExpanded -> MaterialTheme.colorScheme.secondaryContainer
+            !isAfAvailable -> MaterialTheme.colorScheme.primaryContainer
+            currentMode != FocusMode.MANUAL -> MaterialTheme.colorScheme.primary
+            else -> MaterialTheme.colorScheme.primaryContainer
+        }
+        val animatedColor by animateColorAsState(
+            targetValue = targetColor,
+            animationSpec = tween(durationMillis = 300, easing = FastOutSlowInEasing),
+            label = "fab_color"
+        )
+
+        val targetIcon = when {
+            isExpanded -> Icons.Default.Close
+            !isAfAvailable -> Icons.Default.Settings
+            else -> Icons.Default.Tune
+        }
+
         FloatingActionButton(
             onClick = {
                 if (!isChangingResolution) {
@@ -529,19 +594,24 @@ private fun ExpandableAutofocusFab(
                     onExpandChange(!isExpanded)
                 }
             },
-            containerColor = when {
-                isChangingResolution -> MaterialTheme.colorScheme.surfaceVariant
-                isExpanded -> MaterialTheme.colorScheme.secondaryContainer
-                currentMode != FocusMode.MANUAL -> MaterialTheme.colorScheme.primary
-                else -> MaterialTheme.colorScheme.primaryContainer
-            },
+            containerColor = animatedColor,
             modifier = Modifier.scale(fabScale)
         ) {
-            Icon(
-                imageVector = if (isExpanded) Icons.Default.Close else Icons.Default.Tune,
-                contentDescription = if (isExpanded) "Close Menu" else "Autofocus Menu",
-                modifier = Modifier.rotate(rotation)
-            )
+            Crossfade(
+                targetState = targetIcon,
+                animationSpec = tween(durationMillis = 200),
+                label = "fab_icon"
+            ) { icon ->
+                Icon(
+                    imageVector = icon,
+                    contentDescription = when {
+                        isExpanded -> "Close Menu"
+                        !isAfAvailable -> "Open Settings"
+                        else -> "Autofocus Menu"
+                    },
+                    modifier = Modifier.rotate(rotation)
+                )
+            }
         }
     }
 }

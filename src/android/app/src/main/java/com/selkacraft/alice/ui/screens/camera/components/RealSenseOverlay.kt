@@ -48,25 +48,40 @@ fun RealSenseOverlay(
     isAutofocusActive: Boolean = false,
     autofocusMode: String = "MANUAL",
     faceDetectionState: FaceDetectionState = FaceDetectionState(),
-    onFaceTap: (Float, Float) -> Unit = { _, _ -> }
+    onFaceTap: (Float, Float) -> Unit = { _, _ -> },
+    isEffectivelyConnected: Boolean = false,
+    onVisibilityChanged: (Boolean) -> Unit = {},
+    remoteMeasureX: Float = 0.5f,
+    remoteMeasureY: Float = 0.5f
 ) {
     LaunchedEffect(connectionState) {
         android.util.Log.d("RealSenseOverlay", "Connection state changed to: ${connectionState::class.simpleName}")
     }
 
-    val isVisible = when (connectionState) {
-        is ConnectionState.Connected,
-        is ConnectionState.Active,
-        is ConnectionState.Connecting,
-        is ConnectionState.AwaitingPermission -> true
+    val isVisible = when {
+        isEffectivelyConnected -> true
+        connectionState is ConnectionState.Connected
+                || connectionState is ConnectionState.Active
+                || connectionState is ConnectionState.Connecting
+                || connectionState is ConnectionState.AwaitingPermission -> true
         else -> false
     }
 
-    val isStreaming = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Active
+    val isStreaming = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Active || isEffectivelyConnected
 
     val hapticFeedback = LocalHapticFeedback.current
     val density = LocalDensity.current
     var isHidden by remember { mutableStateOf(false) }
+    var hasInitialized by remember { mutableStateOf(false) }
+
+    LaunchedEffect(isHidden) {
+        if (hasInitialized) {
+            // Only send stream control on user gesture, not initial composition
+            onVisibilityChanged(!isHidden)
+        }
+        hasInitialized = true
+    }
+
     var isEnlarged by remember { mutableStateOf(false) }
     var dragOffset by remember { mutableFloatStateOf(0f) }
 
@@ -162,9 +177,9 @@ fun RealSenseOverlay(
                         }
                     ),
                 shape = RoundedCornerShape(12.dp),
-                color = MaterialTheme.colorScheme.surface.copy(alpha = cardAlpha),
-                shadowElevation = if (isHidden) 3.dp else 6.dp,
-                tonalElevation = 2.dp
+                color = MaterialTheme.colorScheme.surfaceContainer.copy(alpha = cardAlpha),
+                shadowElevation = 0.dp,
+                tonalElevation = if (isHidden) 1.dp else 2.dp
             ) {
                 Column(
                     modifier = Modifier.padding(12.dp),
@@ -302,6 +317,8 @@ fun RealSenseOverlay(
                     previewWidth = overlayWidth,
                     faceDetectionState = faceDetectionState,
                     onFaceTap = onFaceTap,
+                    externalMeasureX = remoteMeasureX,
+                    externalMeasureY = remoteMeasureY,
                     onTapToRestore = {
                         if (isHidden) {
                             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -309,7 +326,8 @@ fun RealSenseOverlay(
                         }
                     }
                 )
-            } else if (isStreaming) {
+            } else if (isStreaming && depthBitmap == null && centerDepth <= 0) {
+                // No bitmap AND no depth data — show loading placeholder
                 Surface(
                     modifier = Modifier
                         .width(overlayWidth)
@@ -329,6 +347,9 @@ fun RealSenseOverlay(
                     }
                 }
             }
+            // When streaming with depth data but no bitmap (remote text-only mode),
+            // the large preview panel is hidden — the small info card above already
+            // shows the depth value and confidence.
         }
     }
 }
@@ -366,7 +387,9 @@ private fun DraggableDepthPreview(
     previewWidth: androidx.compose.ui.unit.Dp = 180.dp,
     faceDetectionState: FaceDetectionState = FaceDetectionState(),
     onFaceTap: (Float, Float) -> Unit = { _, _ -> },
-    onTapToRestore: () -> Unit = {}
+    onTapToRestore: () -> Unit = {},
+    externalMeasureX: Float = 0.5f,
+    externalMeasureY: Float = 0.5f
 ) {
     var normalizedPosition by remember { mutableStateOf(Offset(0.5f, 0.5f)) }
     var dragOffset by remember { mutableStateOf(Offset.Zero) }
@@ -376,6 +399,17 @@ private fun DraggableDepthPreview(
     val density = LocalDensity.current
 
     var currentSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+
+    // Sync crosshair from remote measurement position when not dragging locally
+    LaunchedEffect(externalMeasureX, externalMeasureY) {
+        if (!isDragging && currentSize.width > 0) {
+            normalizedPosition = Offset(externalMeasureX, externalMeasureY)
+            dragOffset = Offset(
+                externalMeasureX * currentSize.width,
+                externalMeasureY * currentSize.height
+            )
+        }
+    }
 
     val scale by animateFloatAsState(
         targetValue = if (isDragging) 1.2f else 1f,
@@ -418,16 +452,7 @@ private fun DraggableDepthPreview(
                 contentScale = ContentScale.Fit
             )
 
-            if (autofocusMode == "FACE_TRACKING") {
-                FaceDetectionOverlay(
-                    faceDetectionState = faceDetectionState,
-                    imageWidth = bitmap.width,
-                    imageHeight = bitmap.height,
-                    onFaceTap = onFaceTap,
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
-
+            // Drag/tap handler Box for non-FACE_TRACKING modes
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -573,6 +598,17 @@ private fun DraggableDepthPreview(
                         .padding(4.dp)
                         .background(Color.Black.copy(alpha = 0.5f), RoundedCornerShape(4.dp))
                         .padding(horizontal = 6.dp, vertical = 2.dp)
+                )
+            }
+
+            // Face detection overlay - rendered on top for tap handling
+            if (autofocusMode == "FACE_TRACKING") {
+                FaceDetectionOverlay(
+                    faceDetectionState = faceDetectionState,
+                    imageWidth = bitmap.width,
+                    imageHeight = bitmap.height,
+                    onFaceTap = onFaceTap,
+                    modifier = Modifier.fillMaxSize()
                 )
             }
         }

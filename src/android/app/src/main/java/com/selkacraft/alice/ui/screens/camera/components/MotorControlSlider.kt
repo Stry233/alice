@@ -30,6 +30,7 @@ fun MotorControlSlider(
     connectionState: ConnectionState,
     currentPosition: Int,
     onPositionChange: (Int) -> Unit,
+    isEffectivelyConnected: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     var sliderPosition by remember { mutableFloatStateOf(currentPosition.toFloat()) }
@@ -38,17 +39,22 @@ fun MotorControlSlider(
 
     val hapticFeedback = LocalHapticFeedback.current
 
+    // Local hardware is operational
+    val localOperational = connectionState is ConnectionState.Connected ||
+        connectionState is ConnectionState.Active
+
     LaunchedEffect(currentPosition) {
         if (!isUserDragging) {
             sliderPosition = currentPosition.toFloat()
         }
     }
 
-    val isVisible = when (connectionState) {
-        is ConnectionState.Connected,
-        is ConnectionState.Active,
-        is ConnectionState.Connecting,
-        is ConnectionState.AwaitingPermission -> true
+    val isVisible = when {
+        isEffectivelyConnected -> true
+        connectionState is ConnectionState.Connected
+                || connectionState is ConnectionState.Active
+                || connectionState is ConnectionState.Connecting
+                || connectionState is ConnectionState.AwaitingPermission -> true
         else -> false
     }
 
@@ -120,8 +126,7 @@ fun MotorControlSlider(
                                 lastHapticPosition = newValue
                             }
 
-                            if (connectionState is ConnectionState.Connected ||
-                                connectionState is ConnectionState.Active) {
+                            if (localOperational || isEffectivelyConnected) {
                                 onPositionChange(newValue.toInt())
                             }
                         },
@@ -129,14 +134,12 @@ fun MotorControlSlider(
                             isUserDragging = false
                             hapticFeedback.performHapticFeedback(HapticFeedbackType.LongPress)
 
-                            if (connectionState is ConnectionState.Connected ||
-                                connectionState is ConnectionState.Active) {
+                            if (localOperational || isEffectivelyConnected) {
                                 onPositionChange(sliderPosition.toInt())
                             }
                         },
                         valueRange = 0f..4095f,
-                        enabled = connectionState is ConnectionState.Connected ||
-                                connectionState is ConnectionState.Active,
+                        enabled = localOperational || isEffectivelyConnected,
                         modifier = Modifier
                             .graphicsLayer {
                                 rotationZ = 270f
@@ -176,11 +179,11 @@ fun MotorControlSlider(
                     Surface(
                         modifier = Modifier.size(4.dp),
                         shape = RoundedCornerShape(2.dp),
-                        color = when (connectionState) {
-                            is ConnectionState.Connected,
-                            is ConnectionState.Active -> MaterialTheme.colorScheme.primary
-                            is ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
-                            is ConnectionState.Error -> MaterialTheme.colorScheme.error
+                        color = when {
+                            localOperational -> MaterialTheme.colorScheme.primary
+                            isEffectivelyConnected -> MaterialTheme.colorScheme.tertiary
+                            connectionState is ConnectionState.Connecting -> MaterialTheme.colorScheme.tertiary
+                            connectionState is ConnectionState.Error -> MaterialTheme.colorScheme.error
                             else -> MaterialTheme.colorScheme.outline
                         }
                     ) {}

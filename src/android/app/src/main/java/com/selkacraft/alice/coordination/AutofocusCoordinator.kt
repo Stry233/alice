@@ -1,5 +1,6 @@
 package com.selkacraft.alice.coordination
 
+import android.content.Context
 import com.selkacraft.alice.comm.autofocus.*
 import com.selkacraft.alice.comm.core.ConnectionState
 import com.selkacraft.alice.comm.motor.MotorControlManager
@@ -12,18 +13,28 @@ import kotlinx.coroutines.launch
 /**
  * Coordinates autofocus operations between motor, RealSense depth sensor, and settings.
  * This class encapsulates all the integration logic for the autofocus system.
+ *
+ * The enhanced AF-F mode now includes:
+ * - ONNX YOLO-based face detection for robust tracking at all distances
+ * - Eye tracking for precise focus on subject's eyes (like Sony Real-time Eye AF)
+ * - Kalman filter-based subject tracking for smooth, predictive focus
+ * - Priority scoring for intelligent face selection
  */
 class AutofocusCoordinator(
+    private val context: Context,
     private val autofocusController: AutofocusController,
     private val motorManager: MotorControlManager,
     private val realSenseManager: RealSenseManager,
     private val settingsManager: SettingsManager,
     private val scope: CoroutineScope,
     private val onMotorPositionCommand: (Int) -> Unit,
-    private val onLogMessage: (String, String) -> Unit  // (category, message)
+    private val onLogMessage: (String, String) -> Unit,  // (category, message)
+    /** Optional external override for device readiness (e.g., from remote sync) */
+    private val externalMotorReady: StateFlow<Boolean>? = null,
+    private val externalRealSenseReady: StateFlow<Boolean>? = null
 ) {
-    // Face detection processor for FACE_TRACKING mode
-    private val faceDetectionProcessor = FaceDetectionProcessor(scope)
+    // Face detection processor for FACE_TRACKING mode with eye tracking support
+    private val faceDetectionProcessor = FaceDetectionProcessor(context, scope, onLogMessage)
 
     // Expose autofocus state
     val state: StateFlow<AutofocusState> = autofocusController.state
@@ -39,6 +50,20 @@ class AutofocusCoordinator(
         // Safety: Always start in MANUAL mode on app startup
         // This prevents dangerous autofocus activation without user confirmation
         resetFocusModeToManual("App startup")
+
+        // Initialize enhanced face detection processor (ONNX + ML Kit)
+        scope.launch {
+            val result = faceDetectionProcessor.initialize()
+            if (result.isSuccess) {
+                if (faceDetectionProcessor.isOnnxAvailable()) {
+                    onLogMessage("FACE_TRACKING", "YOLO Eye AF ready")
+                } else {
+                    onLogMessage("FACE_TRACKING", "ML Kit fallback (no YOLO model)")
+                }
+            } else {
+                onLogMessage("FACE_TRACKING", "Face detector init failed")
+            }
+        }
 
         setupDeviceReadinessMonitoring()
         setupDepthDataProcessing()
@@ -70,35 +95,52 @@ class AutofocusCoordinator(
      * Also resets focus mode to MANUAL when core devices reconnect for safety.
      */
     private fun setupDeviceReadinessMonitoring() {
+        // Combine local connection states with optional external (remote) readiness
+        val motorReadyFlow: Flow<Boolean> = if (externalMotorReady != null) {
+            combine(motorManager.connectionState, externalMotorReady) { localState, extReady ->
+                (localState is ConnectionState.Connected || localState is ConnectionState.Active) || extReady
+            }
+        } else {
+            motorManager.connectionState.map { it is ConnectionState.Connected || it is ConnectionState.Active }
+        }
+
+        val realSenseReadyFlow: Flow<Boolean> = if (externalRealSenseReady != null) {
+            combine(realSenseManager.connectionState, externalRealSenseReady) { localState, extReady ->
+                (localState is ConnectionState.Connected || localState is ConnectionState.Active) || extReady
+            }
+        } else {
+            realSenseManager.connectionState.map { it is ConnectionState.Connected || it is ConnectionState.Active }
+        }
+
+        // Monitor LOCAL connection states for reconnection safety reset
+        // (only reset to MANUAL when physical USB hardware reconnects, not remote sync)
         scope.launch {
             combine(
                 motorManager.connectionState,
                 realSenseManager.connectionState
-            ) { motorState, realSenseState ->
-                val motorReady = motorState is ConnectionState.Connected ||
-                        motorState is ConnectionState.Active
-                val realSenseReady = realSenseState is ConnectionState.Connected ||
-                        realSenseState is ConnectionState.Active
-                Pair(motorReady, realSenseReady)
-            }.collect { (motorReady, realSenseReady) ->
-                // Detect device reconnection and reset to MANUAL mode for safety
-                // This ensures autofocus doesn't unexpectedly activate after device reconnection
-                val motorReconnected = motorReady && !wasMotorReady
-                val realSenseReconnected = realSenseReady && !wasRealSenseReady
-
-                if (motorReconnected) {
+            ) { motorState, rsState ->
+                val motorLocal = motorState is ConnectionState.Connected || motorState is ConnectionState.Active
+                val rsLocal = rsState is ConnectionState.Connected || rsState is ConnectionState.Active
+                motorLocal to rsLocal
+            }.collect { (motorLocal, rsLocal) ->
+                if (motorLocal && !wasMotorReady) {
                     resetFocusModeToManual("Motor dongle reconnected")
                 }
-                if (realSenseReconnected) {
+                if (rsLocal && !wasRealSenseReady) {
                     resetFocusModeToManual("RealSense camera reconnected")
                 }
-
-                // Update tracking state
-                wasMotorReady = motorReady
-                wasRealSenseReady = realSenseReady
-
-                autofocusController.updateDeviceReadiness(motorReady, realSenseReady)
+                wasMotorReady = motorLocal
+                wasRealSenseReady = rsLocal
             }
+        }
+
+        // Monitor EFFECTIVE (local+remote) connection states for autofocus readiness
+        scope.launch {
+            combine(motorReadyFlow, realSenseReadyFlow) { motor, rs -> motor to rs }
+                .collect { (motorReady, realSenseReady) ->
+                    onLogMessage("AUTOFOCUS", "Device readiness update: motor=$motorReady, realsense=$realSenseReady")
+                    autofocusController.updateDeviceReadiness(motorReady, realSenseReady)
+                }
         }
     }
 
@@ -165,6 +207,7 @@ class AutofocusCoordinator(
                 }
                 AutofocusSettings(enabled, mode, confidence, smoothing, speed)
             }.collect { settings ->
+                onLogMessage("AUTOFOCUS", "Settings sync: enabled=${settings.enabled}, mode=${settings.mode}, canActivate=${autofocusController.state.value.canActivate}, motorReady=${autofocusController.state.value.isMotorReady}, depthReady=${autofocusController.state.value.isDepthSensorReady}, mapping=${autofocusController.state.value.mapping?.name}")
                 autofocusController.setEnabled(settings.enabled)
                 autofocusController.setFocusMode(settings.mode)
                 autofocusController.updateConfiguration(
@@ -197,7 +240,8 @@ class AutofocusCoordinator(
     }
 
     /**
-     * Setup face detection processing pipeline
+     * Setup face detection processing pipeline with eye tracking.
+     * Uses the enhanced focus point (eye position when available, face center otherwise).
      */
     private fun setupFaceDetectionProcessing() {
         // Process color frames for face detection
@@ -214,15 +258,23 @@ class AutofocusCoordinator(
             faceDetectionProcessor.faceDetectionState.collect { faceState ->
                 autofocusController.updateFaceDetectionState(faceState)
 
-                // Update RealSense measurement position based on selected face
+                // Update RealSense measurement position based on selected face's focus point
+                // This now uses eye position when available (DSLR-quality Eye AF)
                 if (autofocusController.state.value.mode == FocusMode.FACE_TRACKING) {
                     val targetFace = faceState.defaultFocusTarget
                     if (targetFace != null) {
-                        // Set measurement position to face center
-                        realSenseManager.setMeasurementPosition(
-                            targetFace.centerPoint.x,
-                            targetFace.centerPoint.y
-                        )
+                        // Use the focus point (eye when available, face center otherwise)
+                        val focusPoint = targetFace.getFocusPointFor(faceState.focusTargetPreference)
+                        realSenseManager.setMeasurementPosition(focusPoint.x, focusPoint.y)
+
+                        // Log tracking state changes for debugging
+                        val trackingInfo = when (targetFace.trackingState) {
+                            TrackingState.EYE_LOCKED -> "Eye locked"
+                            TrackingState.FACE_ONLY -> "Face tracking"
+                            TrackingState.PREDICTED -> "Predicting position"
+                            TrackingState.LOST -> "Subject lost"
+                        }
+                        // Only log state changes to avoid spam
                     }
                 }
             }

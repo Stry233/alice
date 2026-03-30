@@ -62,7 +62,7 @@ fun AutofocusSettingsTab(
     viewModel: CameraViewModel,
     navController: NavController
 ) {
-    val autofocusEnabled by settingsManager.autofocusEnabled.collectAsState()
+    val localAutofocusEnabled by settingsManager.autofocusEnabled.collectAsState()
     val autofocusMode by settingsManager.autofocusMode.collectAsState()
     val autofocusSmoothing by settingsManager.autofocusSmoothing.collectAsState()
     val autofocusResponseSpeed by settingsManager.autofocusResponseSpeed.collectAsState()
@@ -203,12 +203,15 @@ fun AutofocusSettingsTab(
         SettingsCard(title = "Autofocus Control") {
             SwitchSettingItem(
                 label = "Enable Autofocus",
-                checked = autofocusEnabled && currentMapping != null,
-                onCheckedChange = { settingsManager.setAutofocusEnabled(it) },
+                checked = localAutofocusEnabled,
+                onCheckedChange = {
+                    android.util.Log.d("AutofocusSettingsTab", "Toggle AF: $it, mapping=${currentMapping?.name}")
+                    settingsManager.setAutofocusEnabled(it)
+                },
                 enabled = currentMapping != null
             )
 
-            if (!autofocusEnabled && currentMapping == null) {
+            if (!localAutofocusEnabled && currentMapping == null) {
                 Text(
                     text = "Load a mapping file first",
                     style = MaterialTheme.typography.labelSmall,
@@ -217,7 +220,7 @@ fun AutofocusSettingsTab(
                 )
             }
 
-            AnimatedVisibility(visible = autofocusEnabled && currentMapping != null) {
+            AnimatedVisibility(visible = localAutofocusEnabled && currentMapping != null) {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     val focusModeDisplayNames = mapOf(
                         "MANUAL" to "MANUAL",
@@ -274,7 +277,7 @@ fun AutofocusSettingsTab(
         }
 
         // Focus Statistics
-        AnimatedVisibility(visible = autofocusEnabled && currentMapping != null && focusStats.totalFocusOperations > 0) {
+        AnimatedVisibility(visible = localAutofocusEnabled && currentMapping != null && focusStats.totalFocusOperations > 0) {
             SettingsCard(title = "Focus Statistics") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),

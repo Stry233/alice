@@ -34,6 +34,7 @@ import androidx.compose.material.icons.filled.ControlCamera
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -50,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -64,6 +66,7 @@ import com.selkacraft.alice.ui.screens.settings.tabs.AutofocusSettingsTab
 import com.selkacraft.alice.ui.screens.settings.tabs.CameraSettingsTab
 import com.selkacraft.alice.ui.screens.settings.tabs.DepthSettingsTab
 import com.selkacraft.alice.ui.screens.settings.tabs.MotorSettingsTab
+import com.selkacraft.alice.ui.screens.settings.tabs.NetworkSettingsTab
 import com.selkacraft.alice.ui.screens.settings.tabs.StatusTab
 import com.selkacraft.alice.ui.screens.settings.tabs.SystemSettingsTab
 import com.selkacraft.alice.util.CameraViewModel
@@ -79,12 +82,11 @@ fun SettingsScreen(
     navController: NavController,
     viewModel: CameraViewModel
 ) {
-    val context = LocalContext.current
-    val settingsManager = remember { SettingsManager(context) }
+    val settingsManager = viewModel.settingsManager
     val logMessages by viewModel.logMessages.collectAsState()
     val coordinatorState by viewModel.coordinatorState.collectAsState()
 
-    var selectedTab by remember { mutableStateOf(SettingsTab.AUTOFOCUS) }
+    var selectedTab by rememberSaveable { mutableStateOf(SettingsTab.AUTOFOCUS) }
     val scrollState = rememberScrollState()
     val scope = rememberCoroutineScope()
 
@@ -269,6 +271,27 @@ private fun ColumnScope.SettingsTabContent(
                     SettingsTab.DEPTH -> DepthSettingsTab(settingsManager, viewModel)
                     SettingsTab.MOTOR -> MotorSettingsTab(settingsManager, viewModel, navController)
                     SettingsTab.SYSTEM -> SystemSettingsTab(settingsManager, viewModel)
+                    SettingsTab.WIRELESS -> {
+                        val syncConnected by viewModel.syncClient.connected.collectAsState()
+                        val remoteMotorPos by viewModel.remoteMotorPosition.collectAsState()
+                        val remoteDepth by viewModel.remoteDepth.collectAsState()
+                        val remoteFocusMode by viewModel.remoteFocusMode.collectAsState()
+                        var serverIp by remember { mutableStateOf("") }
+                        var serverPort by remember { mutableStateOf(8765) }
+                        NetworkSettingsTab(
+                            isConnected = syncConnected,
+                            serverIp = serverIp,
+                            serverPort = serverPort,
+                            remoteMotorPosition = remoteMotorPos,
+                            remoteDepth = remoteDepth,
+                            remoteFocusMode = remoteFocusMode,
+                            onConnect = { viewModel.connectToDesktop(serverIp, serverPort, "") },
+                            onDisconnect = { viewModel.disconnectFromDesktop() },
+                            onScanQr = { navController.navigate("qr_scanner") },
+                            onServerIpChanged = { serverIp = it },
+                            onServerPortChanged = { serverPort = it }
+                        )
+                    }
                     SettingsTab.STATUS -> StatusTab(coordinatorState, viewModel)
                 }
             }
@@ -281,6 +304,7 @@ private fun ColumnScope.SettingsTabContent(
  */
 enum class SettingsTab(val title: String, val icon: ImageVector) {
     AUTOFOCUS("Autofocus", Icons.Default.CenterFocusWeak),
+    WIRELESS("Wireless", Icons.Default.Wifi),
     CAMERA("Camera", Icons.Default.CameraAlt),
     MOTOR("Motor", Icons.Default.ControlCamera),
     DEPTH("Depth", Icons.Default.Visibility),

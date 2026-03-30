@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!--
+        Allow cleartext WebSocket (ws://) for LAN sync with Alice desktop.
+        Alice only connects to user-initiated local IP addresses via QR scan.
+        HTTPS/WSS is not practical for LAN-only device pairing.
+    -->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

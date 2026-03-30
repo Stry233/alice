@@ -177,7 +177,10 @@ class SettingsManager(private val context: Context) {
     fun setVideoFormat(value: String) = updateString(KEY_VIDEO_FORMAT, value, _videoFormat)
 
     // Autofocus
-    fun setAutofocusEnabled(value: Boolean) = updateBoolean(KEY_AUTOFOCUS_ENABLED, value, _autofocusEnabled)
+    fun setAutofocusEnabled(value: Boolean) {
+        android.util.Log.d("SettingsManager", "setAutofocusEnabled($value), current=${_autofocusEnabled.value}")
+        updateBoolean(KEY_AUTOFOCUS_ENABLED, value, _autofocusEnabled)
+    }
     fun setAutofocusMode(value: String) = updateString(KEY_AUTOFOCUS_MODE, value, _autofocusMode)
     fun setAutofocusConfidenceThreshold(value: Float) = updateFloat(KEY_AUTOFOCUS_CONFIDENCE_THRESHOLD, value, _autofocusConfidenceThreshold)
     fun setAutofocusSmoothing(value: Boolean) = updateBoolean(KEY_AUTOFOCUS_SMOOTHING, value, _autofocusSmoothing)

@@ -2,6 +2,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    kotlin("plugin.serialization") version "2.0.21"
 }
 
 android {
@@ -13,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 1
-        versionName = "0.1"
+        versionName = "0.2"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -62,12 +63,27 @@ dependencies {
 
     implementation(files("libs/librealsense-release.aar"))
 
-    // ML Kit Face Detection for face tracking autofocus
+    // ML Kit Face Detection for face tracking autofocus (used for eye landmark extraction)
     implementation("com.google.mlkit:face-detection:16.1.7")
 
     // Coroutines support for Google Play Services (required for ML Kit)
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
     implementation(libs.play.services.mlkit.face.detection)
+
+    // ONNX Runtime for robust YOLO-based face detection
+    implementation("com.microsoft.onnxruntime:onnxruntime-android:1.16.3")
+
+    // OkHttp for WebSocket sync client
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
+
+    // CameraX for QR code scanning
+    implementation("androidx.camera:camera-core:1.4.2")
+    implementation("androidx.camera:camera-camera2:1.4.2")
+    implementation("androidx.camera:camera-lifecycle:1.4.2")
+    implementation("androidx.camera:camera-view:1.4.2")
+
+    // ML Kit Barcode scanning for QR handshake
+    implementation("com.google.mlkit:barcode-scanning:17.3.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)

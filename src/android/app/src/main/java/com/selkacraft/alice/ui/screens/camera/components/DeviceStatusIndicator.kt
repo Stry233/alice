@@ -7,6 +7,7 @@ import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.draggable
 import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -27,6 +28,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import com.selkacraft.alice.util.CameraViewModel.DataSource
 import kotlin.math.roundToInt
 
 @Composable
@@ -37,6 +39,7 @@ fun DeviceStatusIndicator(
     motorActive: Boolean,
     realSenseActive: Boolean,
     totalBandwidthUsed: Int = 0,
+    dataSource: DataSource = DataSource.NONE,
     modifier: Modifier = Modifier
 ) {
     val hapticFeedback = LocalHapticFeedback.current
@@ -151,17 +154,20 @@ fun DeviceStatusIndicator(
                     CompactDeviceStatus(
                         icon = Icons.Default.CameraAlt,
                         label = "Camera",
-                        isActive = cameraActive
+                        isActive = cameraActive,
+                        dataSource = dataSource
                     )
                     CompactDeviceStatus(
                         icon = Icons.Default.ControlCamera,
                         label = "Motor",
-                        isActive = motorActive
+                        isActive = motorActive,
+                        dataSource = dataSource
                     )
                     CompactDeviceStatus(
                         icon = Icons.Default.Visibility,
                         label = "Depth",
-                        isActive = realSenseActive
+                        isActive = realSenseActive,
+                        dataSource = dataSource
                     )
                 }
 
@@ -222,20 +228,32 @@ fun DeviceStatusIndicator(
 private fun CompactDeviceStatus(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
-    isActive: Boolean
+    isActive: Boolean,
+    dataSource: DataSource = DataSource.NONE
 ) {
+    val isRemote = isActive && dataSource == DataSource.REMOTE
+
     val statusColor by animateColorAsState(
-        targetValue = if (isActive) Color(0xFF4CAF50) else Color.Gray,
+        targetValue = when {
+            isActive && isRemote -> Color(0xFF00897B) // teal for remote
+            isActive -> Color(0xFF4CAF50) // green for local
+            else -> Color.Gray
+        },
         animationSpec = tween(300),
         label = "status_color"
     )
+
+    val containerColor = when {
+        isActive && isRemote -> Color(0xFF00897B).copy(alpha = 0.12f)
+        isActive -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
 
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .background(
-                color = if (isActive) MaterialTheme.colorScheme.primaryContainer
-                else MaterialTheme.colorScheme.surfaceVariant,
+                color = containerColor,
                 shape = RoundedCornerShape(6.dp)
             )
             .padding(horizontal = 8.dp, vertical = 4.dp),
@@ -246,8 +264,11 @@ private fun CompactDeviceStatus(
             imageVector = icon,
             contentDescription = label,
             modifier = Modifier.size(14.dp),
-            tint = if (isActive) MaterialTheme.colorScheme.primary
-            else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            tint = when {
+                isActive && isRemote -> Color(0xFF00897B)
+                isActive -> MaterialTheme.colorScheme.primary
+                else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
+            }
         )
         Text(
             text = label,
@@ -256,11 +277,20 @@ private fun CompactDeviceStatus(
             else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             modifier = Modifier.weight(1f)
         )
-        Box(
-            modifier = Modifier
-                .size(6.dp)
-                .clip(CircleShape)
-                .background(statusColor)
-        )
+        // Filled dot = local (physical), Ring = remote (wireless)
+        if (isRemote) {
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .border(1.5.dp, statusColor, CircleShape)
+            )
+        } else {
+            Box(
+                modifier = Modifier
+                    .size(6.dp)
+                    .clip(CircleShape)
+                    .background(statusColor)
+            )
+        }
     }
 }

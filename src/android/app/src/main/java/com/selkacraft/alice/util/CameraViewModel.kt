@@ -24,6 +24,7 @@ import java.io.IOException
 import android.hardware.usb.UsbManager
 import android.content.Context
 import android.hardware.usb.UsbDevice
+import androidx.lifecycle.application
 import kotlinx.coroutines.Job
 
 enum class CameraState { IDLE, CONNECTING, READY, ERROR }
@@ -98,6 +99,207 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private lateinit var autofocusCoordinator: AutofocusCoordinator
     private lateinit var settingsSynchronizer: SettingsSynchronizer
 
+    // Network sync
+    val syncClient = com.selkacraft.alice.comm.network.SyncClient(viewModelScope)
+    private var suppressModeSyncUntil = 0L // Timestamp-based suppression to prevent echo loop
+
+    // Remote desktop state (received via sync)
+    private val _remoteMotorPosition = MutableStateFlow(0)
+    val remoteMotorPosition: StateFlow<Int> = _remoteMotorPosition.asStateFlow()
+    private val _remoteDepth = MutableStateFlow(0f)
+    val remoteDepth: StateFlow<Float> = _remoteDepth.asStateFlow()
+    private val _remoteFocusMode = MutableStateFlow("")
+    val remoteFocusMode: StateFlow<String> = _remoteFocusMode.asStateFlow()
+    private val _remoteDepthConfidence = MutableStateFlow(0f)
+    private val _remoteAutofocusEnabled = MutableStateFlow(false)
+    private val _remoteIsActivelyFocusing = MutableStateFlow(false)
+    private val _remoteMotorConnected = MutableStateFlow(false)
+    private var _remoteCaptureConnected = false
+    private val _remoteMeasureX = MutableStateFlow(0.5f)
+    private val _remoteMeasureY = MutableStateFlow(0.5f)
+    val remoteMeasureX: StateFlow<Float> = _remoteMeasureX.asStateFlow()
+    val remoteMeasureY: StateFlow<Float> = _remoteMeasureY.asStateFlow()
+    private val _remoteRealSenseConnected = MutableStateFlow(false)
+
+    // Unified data layer: indicates whether the UI is showing local, remote, or no data
+    enum class DataSource { LOCAL, REMOTE, NONE }
+
+    init {
+        // Process incoming sync messages
+        viewModelScope.launch {
+            syncClient.messages.collect { msg ->
+                when (msg.type) {
+                    "STATE_UPDATE" -> {
+                        msg.payload["motorPosition"]?.let {
+                            try { _remoteMotorPosition.value = it.toString().toDouble().toInt() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["depth"]?.let {
+                            try { _remoteDepth.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["focusMode"]?.let {
+                            _remoteFocusMode.value = it.toString().removeSurrounding("\"")
+                        }
+                        msg.payload["depthConfidence"]?.let {
+                            try { _remoteDepthConfidence.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["isEnabled"]?.let {
+                            try { _remoteAutofocusEnabled.value = it.toString().toBoolean() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["isActivelyFocusing"]?.let {
+                            try { _remoteIsActivelyFocusing.value = it.toString().toBoolean() }
+                            catch (_: Exception) {}
+                        }
+                        @Suppress("UNCHECKED_CAST")
+                        (msg.payload["connectionStates"] as? Map<String, Any?>)?.let { connStates ->
+                            connStates["motor"]?.let {
+                                _remoteMotorConnected.value = it.toString().removeSurrounding("\"") == "Active"
+                            }
+                            var rsChanged = false
+                            var camChanged = false
+
+                            connStates["realSense"]?.let {
+                                val rsConnected = it.toString().removeSurrounding("\"").let { v -> v == "Active" || v == "Connected" }
+                                val wasConnected = _remoteRealSenseConnected.value
+                                _remoteRealSenseConnected.value = rsConnected
+                                if (wasConnected && !rsConnected) {
+                                    syncClient.clearRemoteBitmaps(color = true, depth = true, capture = false)
+                                }
+                                if (wasConnected != rsConnected) rsChanged = true
+                            }
+                            connStates["camera"]?.let {
+                                val camConnected = it.toString().removeSurrounding("\"") == "Active"
+                                val wasConnected = _remoteCaptureConnected
+                                _remoteCaptureConnected = camConnected
+                                if (wasConnected && !camConnected) {
+                                    syncClient.clearRemoteBitmaps(color = false, depth = false, capture = true)
+                                }
+                                if (wasConnected != camConnected) camChanged = true
+                            }
+
+                            // Re-request streams when a device reconnects (was off, now on)
+                            if ((rsChanged && _remoteRealSenseConnected.value) ||
+                                (camChanged && _remoteCaptureConnected)) {
+                                syncClient.sendStreamControl(
+                                    color = _remoteRealSenseConnected.value,
+                                    depth = _remoteRealSenseConnected.value,
+                                    capture = _remoteCaptureConnected
+                                )
+                            }
+                        }
+                        msg.payload["measureX"]?.let {
+                            try { _remoteMeasureX.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["measureY"]?.let {
+                            try { _remoteMeasureY.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                    }
+                    "MODE_CHANGE" -> {
+                        // Suppress re-broadcast for 200ms to avoid echo loop
+                        suppressModeSyncUntil = System.currentTimeMillis() + 200
+                        msg.payload["mode"]?.let { modeElement ->
+                            val mode = modeElement.toString().removeSurrounding("\"")
+                            if (mode.isNotBlank()) {
+                                settingsManager.setAutofocusMode(mode)
+                            }
+                        }
+                        msg.payload["enabled"]?.let { enabledElement ->
+                            try {
+                                val enabled = enabledElement.toString().toBoolean()
+                                settingsManager.setAutofocusEnabled(enabled)
+                            } catch (_: Exception) {}
+                        }
+                    }
+                    "CALIBRATION_SYNC" -> {
+                        val action = msg.payload["action"]?.toString()?.removeSurrounding("\"") ?: ""
+                        if (action == "CLEAR") {
+                            viewModelScope.launch {
+                                autofocusController.clearMapping()
+                                settingsManager.setAutofocusEnabled(false)
+                                settingsManager.setAutofocusMappingName("")
+                                log(LogCategory.AUTOFOCUS, "Mapping cleared by remote", LogLevel.INFO)
+                            }
+                        } else if (action == "PUSH") {
+                            msg.payload["mapping"]?.let { mappingElement ->
+                                val mappingJsonStr = mappingElement.toString()
+                                viewModelScope.launch {
+                                    try {
+                                        val mapping = AutofocusMapping.fromJson(mappingJsonStr).getOrThrow()
+                                        autofocusController.loadMappingDirect(mapping)
+                                        settingsManager.setAutofocusMappingName(mapping.name)
+                                        log(LogCategory.AUTOFOCUS,
+                                            "Loaded mapping from remote sync: ${mapping.name}",
+                                            LogLevel.INFO)
+                                    } catch (e: Exception) {
+                                        log(LogCategory.AUTOFOCUS,
+                                            "Failed to load remote mapping: ${e.message}",
+                                            LogLevel.ERROR)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // Log sync events
+        viewModelScope.launch {
+            syncClient.events.collect { event ->
+                when (event) {
+                    is com.selkacraft.alice.comm.network.SyncEvent.Connected -> {
+                        log(LogCategory.SYSTEM, "Connected to desktop", LogLevel.INFO)
+                        // Push existing mapping to desktop if one is loaded
+                        autofocusState.value.mapping?.let { mapping ->
+                            val mappingJsonStr = mapping.toJson()
+                            val mappingElement = kotlinx.serialization.json.Json.parseToJsonElement(mappingJsonStr)
+                            syncClient.send(
+                                com.selkacraft.alice.comm.network.SyncMessage.calibrationSync("PUSH", mappingElement)
+                            )
+                            log(LogCategory.AUTOFOCUS, "Pushed existing mapping to desktop: ${mapping.name}", LogLevel.INFO)
+                        }
+                        // Sync current autofocus enabled state and mode
+                        val currentMode = settingsManager.autofocusMode.value
+                        val currentEnabled = settingsManager.autofocusEnabled.value
+                        syncClient.sendModeChange(
+                            currentMode,
+                            currentEnabled,
+                            settingsManager.autofocusConfidenceThreshold.value,
+                            settingsManager.autofocusSmoothing.value,
+                            settingsManager.autofocusResponseSpeed.value
+                        )
+                        // Request video streams from desktop
+                        syncClient.sendStreamControl(color = true, depth = true, capture = true)
+                    }
+                    is com.selkacraft.alice.comm.network.SyncEvent.Disconnected ->
+                        log(LogCategory.SYSTEM, "Disconnected from desktop: ${event.reason}", LogLevel.INFO)
+                    is com.selkacraft.alice.comm.network.SyncEvent.Error ->
+                        log(LogCategory.SYSTEM, "Sync error: ${event.message}", LogLevel.ERROR)
+                }
+            }
+        }
+    }
+
+    fun connectToDesktop(ip: String, port: Int, token: String) {
+        log(LogCategory.SYSTEM, "Connecting to desktop at $ip:$port", LogLevel.INFO)
+        syncClient.connect(ip, port, token)
+    }
+
+    fun disconnectFromDesktop() {
+        log(LogCategory.SYSTEM, "Disconnecting from desktop", LogLevel.INFO)
+        syncClient.disconnect()
+    }
+
+    fun setRemoteStreamEnabled(color: Boolean, depth: Boolean, capture: Boolean = false) {
+        if (syncClient.connected.value) {
+            syncClient.sendStreamControl(color, depth, capture)
+        }
+    }
+
     // Direct access to managers (for backward compatibility)
     lateinit var uvcCameraManager: UvcCameraManager
         private set
@@ -139,6 +341,136 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     val realSenseDepthBitmap: StateFlow<Bitmap?> by lazy { deviceCoordinator.realSenseDepthBitmap }
     val realSenseColorBitmap: StateFlow<Bitmap?> by lazy { deviceCoordinator.realSenseColorBitmap }
     val realSenseMeasurementPosition: StateFlow<Pair<Float, Float>> by lazy { deviceCoordinator.realSenseMeasurementPosition }
+
+    // --- Effective (unified) StateFlows: merge local hardware with remote desktop data ---
+    // Pattern: local wins when operational, else remote when synced, else default
+
+    val effectiveDataSource: StateFlow<DataSource> by lazy {
+        combine(
+            motorConnectionState,
+            realSenseConnectionState,
+            syncClient.connected
+        ) { motorConn, rsConn, synced ->
+            val localOperational = motorConn.isOperational() || rsConn.isOperational()
+            when {
+                localOperational -> DataSource.LOCAL
+                synced -> DataSource.REMOTE
+                else -> DataSource.NONE
+            }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, DataSource.NONE)
+    }
+
+    val effectiveMotorPosition: StateFlow<Int> by lazy {
+        combine(
+            motorPosition,
+            _remoteMotorPosition,
+            motorConnectionState,
+            syncClient.connected
+        ) { local, remote, localConn, synced ->
+            if (localConn.isOperational()) local
+            else if (synced) remote
+            else local
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    }
+
+    val effectiveDepth: StateFlow<Float> by lazy {
+        combine(
+            realSenseCenterDepth,
+            _remoteDepth,
+            realSenseConnectionState,
+            syncClient.connected
+        ) { local, remote, localConn, synced ->
+            if (localConn.isOperational()) local
+            else if (synced) remote
+            else local
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+    }
+
+    val effectiveDepthConfidence: StateFlow<Float> by lazy {
+        combine(
+            realSenseDepthConfidence,
+            _remoteDepthConfidence,
+            realSenseConnectionState,
+            syncClient.connected
+        ) { local, remote, localConn, synced ->
+            if (localConn.isOperational()) local
+            else if (synced) remote
+            else local
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0f)
+    }
+
+    val effectiveMotorConnected: StateFlow<Boolean> by lazy {
+        combine(
+            motorConnectionState,
+            _remoteMotorConnected,
+            syncClient.connected
+        ) { localConn, remoteConnected, synced ->
+            localConn.isOperational() || (synced && remoteConnected)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    }
+
+    val effectiveRealSenseConnected: StateFlow<Boolean> by lazy {
+        combine(
+            realSenseConnectionState,
+            _remoteRealSenseConnected,
+            syncClient.connected
+        ) { localConn, remoteConnected, synced ->
+            localConn.isOperational() || (synced && remoteConnected)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    }
+
+    val effectiveDepthBitmap: StateFlow<Bitmap?> by lazy {
+        combine(
+            realSenseDepthBitmap,
+            syncClient.remoteDepthBitmap,
+            realSenseConnectionState,
+            syncClient.connected
+        ) { local, remote, localConn, synced ->
+            if (localConn.isOperational()) local
+            else if (synced) remote
+            else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
+
+    val effectiveColorBitmap: StateFlow<Bitmap?> by lazy {
+        combine(
+            realSenseColorBitmap,
+            syncClient.remoteColorBitmap,
+            realSenseConnectionState,
+            syncClient.connected
+        ) { local, remote, localConn, synced ->
+            if (localConn.isOperational()) local
+            else if (synced) remote
+            else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
+
+    // Effective camera frame: null when local UVC camera is active (uses Surface),
+    // remote Bitmap when only synced (desktop capture card feed)
+    val effectiveCameraFrame: StateFlow<Bitmap?> by lazy {
+        combine(
+            cameraConnectionState,
+            syncClient.remoteCaptureFrame,
+            syncClient.connected
+        ) { localConn, remote, synced ->
+            // Local camera renders via SurfaceHolder — return null so UI uses Surface path
+            if (localConn.isOperational()) null
+            else if (synced) remote
+            else null
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
+
+    val effectiveAutofocusEnabled: StateFlow<Boolean> by lazy {
+        combine(
+            autofocusEnabled,
+            _remoteAutofocusEnabled,
+            syncClient.connected
+        ) { local, remote, synced ->
+            // Local always wins — it reflects direct user intent via the toggle.
+            // Remote only fills in when there's no local hardware to control.
+            local || (synced && remote)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    }
 
     // Autofocus state from coordinator
     val autofocusState: StateFlow<AutofocusState> by lazy { autofocusCoordinator.state }
@@ -234,6 +566,26 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         autofocusCoordinator.initialize()
         settingsSynchronizer.initialize()
 
+        // Sync local autofocus mode/enabled changes to desktop when connected
+        viewModelScope.launch {
+            combine(
+                settingsManager.autofocusMode,
+                settingsManager.autofocusEnabled
+            ) { mode, enabled -> mode to enabled }
+                .collect { (mode, enabled) ->
+                    android.util.Log.d("CameraViewModel", "Mode/enabled combine fired: mode=$mode, enabled=$enabled, synced=${syncClient.connected.value}, suppress=${System.currentTimeMillis() <= suppressModeSyncUntil}")
+                    if (syncClient.connected.value && System.currentTimeMillis() > suppressModeSyncUntil) {
+                        syncClient.sendModeChange(
+                            mode,
+                            enabled,
+                            settingsManager.autofocusConfidenceThreshold.value,
+                            settingsManager.autofocusSmoothing.value,
+                            settingsManager.autofocusResponseSpeed.value
+                        )
+                    }
+                }
+        }
+
         log(LogCategory.SYSTEM, "CameraViewModel initialized with coordinators", LogLevel.INFO)
     }
 
@@ -307,8 +659,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
         )
 
-        // Create autofocus coordinator
+        // Remote device readiness flows for autofocus coordinator
+        val remoteMotorReadyFlow: StateFlow<Boolean> = combine(
+            syncClient.connected, _remoteMotorConnected
+        ) { synced, remote -> synced && remote }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+        val remoteRealSenseReadyFlow: StateFlow<Boolean> = combine(
+            syncClient.connected, _remoteRealSenseConnected
+        ) { synced, remote -> synced && remote }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, false)
+
+        // Create autofocus coordinator with enhanced Eye AF support
         autofocusCoordinator = AutofocusCoordinator(
+            context = application.applicationContext,
             autofocusController = autofocusController,
             motorManager = motorControlManager,
             realSenseManager = realSenseManager,
@@ -320,6 +684,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             onLogMessage = { category, message ->
                 val logCategory = when (category) {
                     "AUTOFOCUS" -> LogCategory.AUTOFOCUS
+                    "FACE_TRACKING" -> LogCategory.AUTOFOCUS
                     "MOTOR" -> LogCategory.MOTOR
                     "REALSENSE" -> LogCategory.REALSENSE
                     else -> LogCategory.SYSTEM
@@ -329,11 +694,14 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                     message.contains("Warning", ignoreCase = true) ||
                     message.contains("lost", ignoreCase = true) -> LogLevel.WARNING
                     message.contains("started", ignoreCase = true) ||
-                    message.contains("achieved", ignoreCase = true) -> LogLevel.DEBUG
+                    message.contains("achieved", ignoreCase = true) ||
+                    message.contains("Eye", ignoreCase = true) -> LogLevel.DEBUG
                     else -> LogLevel.INFO
                 }
                 log(logCategory, message, logLevel)
-            }
+            },
+            externalMotorReady = remoteMotorReadyFlow,
+            externalRealSenseReady = remoteRealSenseReadyFlow
         )
 
         // Create settings synchronizer
@@ -356,7 +724,21 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
 
     // Tap-to-focus handler - delegated to autofocus coordinator
     fun setRealSenseMeasurementPosition(normalizedX: Float, normalizedY: Float) {
-        autofocusCoordinator.processTap(normalizedX, normalizedY)
+        if (syncClient.connected.value && !realSenseConnectionState.value.isOperational()) {
+            // Remote mode: send position to desktop
+            android.util.Log.d("CameraViewModel", "Sending MEASURE_POSITION: x=$normalizedX y=$normalizedY")
+            val payload = com.selkacraft.alice.comm.network.buildJsonMap {
+                put("x", normalizedX)
+                put("y", normalizedY)
+            }
+            syncClient.send(com.selkacraft.alice.comm.network.SyncMessage(
+                type = "MEASURE_POSITION",
+                payload = payload
+            ))
+        } else {
+            // Local mode: set directly on hardware
+            autofocusCoordinator.processTap(normalizedX, normalizedY)
+        }
     }
 
     // Select a face for autofocus in FACE_TRACKING mode
@@ -378,6 +760,16 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         log(LogCategory.AUTOFOCUS,
                             "Successfully loaded mapping: ${mapping.name} with ${mapping.mappingPoints.size} points",
                             LogLevel.INFO)
+
+                        // Sync mapping to desktop if connected
+                        if (syncClient.connected.value) {
+                            val mappingJsonStr = mapping.toJson()
+                            val mappingElement = kotlinx.serialization.json.Json.parseToJsonElement(mappingJsonStr)
+                            syncClient.send(
+                                com.selkacraft.alice.comm.network.SyncMessage.calibrationSync("PUSH", mappingElement)
+                            )
+                            log(LogCategory.AUTOFOCUS, "Synced mapping to desktop: ${mapping.name}", LogLevel.INFO)
+                        }
                     }
 
                     // Log any warnings
@@ -412,6 +804,18 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             if (validation?.isValid == true) {
                 settingsManager.setAutofocusEnabled(true)
                 settingsManager.setAutofocusMappingPreset(preset.name)
+
+                // Sync mapping to desktop if connected
+                if (syncClient.connected.value) {
+                    autofocusState.value.mapping?.let { mapping ->
+                        val mappingJsonStr = mapping.toJson()
+                        val mappingElement = kotlinx.serialization.json.Json.parseToJsonElement(mappingJsonStr)
+                        syncClient.send(
+                            com.selkacraft.alice.comm.network.SyncMessage.calibrationSync("PUSH", mappingElement)
+                        )
+                        log(LogCategory.AUTOFOCUS, "Synced preset mapping to desktop: ${mapping.name}", LogLevel.INFO)
+                    }
+                }
             }
             validation ?: ValidationResult(false, listOf("Failed to load preset"))
         }
@@ -424,6 +828,9 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         settingsManager.setAutofocusMappingName("")
         settingsManager.setAutofocusMode(FocusMode.MANUAL.name)
         log(LogCategory.AUTOFOCUS, "Mapping cleared, focus mode reset to MANUAL", LogLevel.INFO)
+        if (syncClient.connected.value) {
+            syncClient.send(com.selkacraft.alice.comm.network.SyncMessage.calibrationSync("CLEAR"))
+        }
     }
 
     // Export current mapping
@@ -728,9 +1135,10 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun setMotorPosition(position: Int, isManualControl: Boolean = false) {
-        if (motorConnectionState.value is ConnectionState.Connected ||
-            motorConnectionState.value is ConnectionState.Active) {
+        val localConnected = motorConnectionState.value is ConnectionState.Connected ||
+            motorConnectionState.value is ConnectionState.Active
 
+        if (localConnected) {
             // If this is manual control, switch to manual mode
             if (isManualControl) {
                 if (autofocusState.value.mode != FocusMode.MANUAL) {
@@ -754,9 +1162,25 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             }
 
             motorControlManager.setPosition(adjustedPosition)
+        } else if (syncClient.connected.value) {
+            // Local motor not connected but desktop sync is active — route via network
+            if (isManualControl) {
+                if (autofocusState.value.mode != FocusMode.MANUAL) {
+                    log(LogCategory.AUTOFOCUS,
+                        "Manual motor control detected (remote), switching to manual focus mode",
+                        LogLevel.INFO)
+                    settingsManager.setAutofocusMode(FocusMode.MANUAL.name)
+                    settingsManager.setAutofocusEnabled(false)
+                }
+            }
+            val clamped = position.coerceIn(0, 4095)
+            syncClient.sendMotorCommand(clamped, if (isManualControl) "manual" else "autofocus")
+            log(LogCategory.MOTOR,
+                "Sent motor position $clamped via remote sync",
+                LogLevel.DEBUG)
         } else {
             log(LogCategory.MOTOR,
-                "Cannot set position - motor not connected",
+                "Cannot set position - motor not connected (local or remote)",
                 LogLevel.WARNING)
         }
     }
