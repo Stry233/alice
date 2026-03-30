@@ -119,7 +119,7 @@ qt_add_qml_module(alice_ui
         src/ui/qml/TelemetryPanel.qml
         src/ui/qml/CalibrationView.qml
         src/ui/qml/SettingsView.qml
-        src/ui/qml/ConnectionDialog.qml
+        src/ui/qml/ConnectionView.qml
         src/ui/qml/OpsView.qml
         src/ui/qml/components/AppCard.qml
         src/ui/qml/components/SectionHeader.qml
