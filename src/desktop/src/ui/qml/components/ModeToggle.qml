@@ -1,41 +1,56 @@
 import QtQuick
 import Alice.UI
 
-Row {
+Rectangle {
     id: toggle
     property int currentMode: 0
     signal modeChanged(int mode)
-    spacing: 0
 
-    Repeater {
-        model: [
-            { label: "OPS", mode: 0 },
-            { label: "CFG", mode: 1 }
-        ]
+    width: Theme.dp(78) * 2 + 3
+    height: Theme.dp(42)
+    radius: Theme.radiusSm
+    color: "transparent"
+    border.width: 1
+    border.color: Theme.border
+
+    Row {
+        anchors.fill: parent
+        anchors.margins: 1
 
         Rectangle {
-            required property var modelData
-            required property int index
-            width: 40; height: 24
-            color: toggle.currentMode === modelData.mode ? Theme.primary : "transparent"
-            border.width: 1
-            border.color: toggle.currentMode === modelData.mode ? Theme.primary : Theme.border
-            radius: 0
+            id: btnOps
+            width: Theme.dp(78)
+            height: parent.height
+            radius: Theme.radiusSm
+            color: toggle.currentMode === 0 ? Theme.primary : "transparent"
+            Rectangle { visible: toggle.currentMode === 0; anchors.right: parent.right; width: Theme.radiusSm; height: parent.height; color: Theme.primary }
 
             Text {
-                anchors.centerIn: parent
-                text: modelData.label
-                font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeCaption
-                font.weight: toggle.currentMode === modelData.mode ? Font.DemiBold : Font.Normal
-                color: toggle.currentMode === modelData.mode ? "#ffffff" : Theme.textSecondary
+                id: opsLabel; anchors.centerIn: parent; text: "OPS"
+                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall
+                font.weight: toggle.currentMode === 0 ? Font.DemiBold : Font.Normal
+                color: toggle.currentMode === 0 ? "#ffffff" : Theme.textSecondary
             }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: toggle.modeChanged(0) }
+        }
 
-            MouseArea {
-                anchors.fill: parent
-                cursorShape: Qt.PointingHandCursor
-                onClicked: toggle.modeChanged(modelData.mode)
+        Rectangle { width: 1; height: parent.height; color: Theme.border }
+
+        Rectangle {
+            id: btnCfg
+            width: Theme.dp(78)
+            height: parent.height
+            radius: Theme.radiusSm
+            color: toggle.currentMode === 1 ? Theme.primary : "transparent"
+            Rectangle { visible: toggle.currentMode === 1; anchors.left: parent.left; width: Theme.radiusSm; height: parent.height; color: Theme.primary }
+
+            Text {
+                id: cfgLabel; anchors.centerIn: parent; text: "CFG"
+                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall
+                font.weight: toggle.currentMode === 1 ? Font.DemiBold : Font.Normal
+                color: toggle.currentMode === 1 ? "#ffffff" : Theme.textSecondary
             }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: toggle.modeChanged(1) }
         }
     }
 }

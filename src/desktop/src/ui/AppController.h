@@ -103,6 +103,7 @@ public:
     int targetMotorPosition() const;
 
     QString mappingName() const;
+    Q_INVOKABLE QVariantList mappingPoints() const;
     Q_INVOKABLE void loadMappingFromFile(const QString &path);
     Q_INVOKABLE void loadPreset(int presetIndex);
     Q_INVOKABLE void clearMapping();

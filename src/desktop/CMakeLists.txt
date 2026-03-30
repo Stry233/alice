@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(AliceDesktop VERSION 0.2 LANGUAGES CXX)
+project(AliceDesktop VERSION 0.1 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,7 +7,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
 # Qt 6
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Quick QuickControls2 QuickDialogs2 Multimedia Concurrent SerialPort WebSockets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Quick QuickControls2 QuickDialogs2 Multimedia Concurrent SerialPort WebSockets)
 qt_standard_project_setup(REQUIRES 6.5)
 
 # Intel RealSense SDK
@@ -99,6 +99,9 @@ target_link_libraries(alice_network PUBLIC
     qrencode
 )
 
+# Mark Theme.qml as a singleton for the QML module system
+set_source_files_properties(src/ui/qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
+
 # UI library
 qt_add_qml_module(alice_ui
     URI Alice.UI
@@ -134,20 +137,22 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/MiniMap.qml
         src/ui/qml/components/BadgePopover.qml
         src/ui/qml/components/SyncPopover.qml
+        src/ui/qml/SplashScreen.qml
         src/ui/qml/CfgView.qml
         src/ui/qml/components/CalibrationTable.qml
         src/ui/qml/components/CalibrationGraph.qml
+        src/ui/qml/components/MappingPlot.qml
     RESOURCES
         assets/fonts/Inter-Regular.ttf
         assets/fonts/Inter-Medium.ttf
         assets/fonts/Inter-SemiBold.ttf
         assets/fonts/Inter-Bold.ttf
         assets/fonts/RobotoMono-Regular.ttf
-        assets/alice_icon.png
         assets/icons/alice_logo.svg
         assets/icons/zoom_in.svg
         assets/icons/zoom_out.svg
         assets/icons/zoom_fit.svg
+        assets/icons/alice_app_icon.svg
 )
 target_link_libraries(alice_ui PUBLIC
     alice_core
@@ -163,6 +168,8 @@ target_link_libraries(AliceDesktop PRIVATE
     alice_ui
     alice_uiplugin
     Qt6::QuickControls2
+    Qt6::Widgets
+    Qt6::Svg
 )
 qt_import_qml_plugins(AliceDesktop)
 

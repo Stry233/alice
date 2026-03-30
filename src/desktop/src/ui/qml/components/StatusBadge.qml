@@ -12,8 +12,8 @@ Item {
     property bool isSync: false
     signal clicked()
 
-    width: row.implicitWidth + 16
-    height: 28
+    width: row.implicitWidth + Theme.dp(32)
+    height: Theme.dp(38)
 
     Rectangle {
         id: bg
@@ -29,12 +29,12 @@ Item {
     RowLayout {
         id: row
         anchors.centerIn: parent
-        spacing: 6
+        spacing: Theme.dp(8)
         Rectangle {
-            width: 6; height: 6; radius: 3
+            width: Theme.dp(12); height: Theme.dp(12); radius: Theme.dp(6)
             color: connected ? Theme.success : Theme.danger
             SequentialAnimation on opacity {
-                running: !connected && badge.isSync
+                running: !connected && badge.isSync && alice && alice.syncServerRunning
                 loops: Animation.Infinite
                 NumberAnimation { to: 0.4; duration: 800 }
                 NumberAnimation { to: 1.0; duration: 800 }
@@ -43,7 +43,7 @@ Item {
         Text {
             text: badge.label
             font.family: Theme.fontFamily
-            font.pixelSize: Theme.fontSizeCaption
+            font.pixelSize: Theme.fontSizeSmall
             color: connected ? Theme.textPrimary : Theme.textSecondary
         }
     }

@@ -1,9 +1,10 @@
 import QtQuick
+import QtQuick.Controls
 import QtQuick.Layouts
 import Alice.UI
 
 ColumnLayout {
-    spacing: 4
+    spacing: Theme.dp(8)
 
     Label {
         text: "SYSTEM"
@@ -13,33 +14,36 @@ ColumnLayout {
         color: Theme.textSecondary
     }
 
+    // CPU
     RowLayout {
-        Layout.fillWidth: true; spacing: 8
-        Text { text: "CPU"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: 10; Layout.preferredWidth: 32 }
+        Layout.fillWidth: true; spacing: Theme.dp(12)
+        Text { text: "CPU"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64) }
         Rectangle {
-            Layout.fillWidth: true; height: 4; radius: 2; color: Theme.surface
-            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.cpuUsage : 0) / 100); height: parent.height; radius: 2; color: (sysMonitor && sysMonitor.cpuUsage > 80) ? Theme.danger : Theme.success }
+            Layout.fillWidth: true; height: Theme.dp(8); radius: Theme.radiusSm; color: Theme.surface
+            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.cpuUsage : 0) / 100); height: parent.height; radius: Theme.radiusSm; color: (sysMonitor && sysMonitor.cpuUsage > 80) ? Theme.danger : Theme.success }
         }
-        Text { text: Math.round(sysMonitor ? sysMonitor.cpuUsage : 0) + "%"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: 10; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignRight }
+        Text { text: Math.round(sysMonitor ? sysMonitor.cpuUsage : 0) + "%"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64); horizontalAlignment: Text.AlignRight }
     }
 
+    // GPU
     RowLayout {
-        Layout.fillWidth: true; spacing: 8
-        Text { text: "GPU"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: 10; Layout.preferredWidth: 32 }
+        Layout.fillWidth: true; spacing: Theme.dp(12)
+        Text { text: "GPU"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64) }
         Rectangle {
-            Layout.fillWidth: true; height: 4; radius: 2; color: Theme.surface
-            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.gpuUsage : 0) / 100); height: parent.height; radius: 2; color: (sysMonitor && sysMonitor.gpuUsage > 80) ? Theme.danger : Theme.warning }
+            Layout.fillWidth: true; height: Theme.dp(8); radius: Theme.radiusSm; color: Theme.surface
+            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.gpuUsage : 0) / 100); height: parent.height; radius: Theme.radiusSm; color: (sysMonitor && sysMonitor.gpuUsage > 80) ? Theme.danger : Theme.warning }
         }
-        Text { text: Math.round(sysMonitor ? sysMonitor.gpuUsage : 0) + "%"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: 10; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignRight }
+        Text { text: Math.round(sysMonitor ? sysMonitor.gpuUsage : 0) + "%"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64); horizontalAlignment: Text.AlignRight }
     }
 
+    // MEM
     RowLayout {
-        Layout.fillWidth: true; spacing: 8
-        Text { text: "MEM"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: 10; Layout.preferredWidth: 32 }
+        Layout.fillWidth: true; spacing: Theme.dp(12)
+        Text { text: "MEM"; color: Theme.textSecondary; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64) }
         Rectangle {
-            Layout.fillWidth: true; height: 4; radius: 2; color: Theme.surface
-            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.memoryUsage : 0) / (8.0 * 1024 * 1024 * 1024)); height: parent.height; radius: 2; color: Theme.primary }
+            Layout.fillWidth: true; height: Theme.dp(8); radius: Theme.radiusSm; color: Theme.surface
+            Rectangle { width: parent.width * Math.min(1, (sysMonitor ? sysMonitor.memoryUsage : 0) / (8.0 * 1024 * 1024 * 1024)); height: parent.height; radius: Theme.radiusSm; color: Theme.primary }
         }
-        Text { text: sysMonitor ? sysMonitor.memoryFormatted : "0M"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: 10; Layout.preferredWidth: 32; horizontalAlignment: Text.AlignRight }
+        Text { text: sysMonitor ? sysMonitor.memoryFormatted : "0M"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; Layout.preferredWidth: Theme.dp(64); horizontalAlignment: Text.AlignRight }
     }
 }

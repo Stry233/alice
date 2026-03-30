@@ -1,4 +1,4 @@
-#include <QGuiApplication>
+#include <QApplication>
 #include <QQmlApplicationEngine>
 #include <QQmlContext>
 #include <QQmlComponent>
@@ -6,6 +6,12 @@
 #include <QFont>
 #include <QFontDatabase>
 #include <QIcon>
+#include <QTimer>
+#include <QSplashScreen>
+#include <QThreadPool>
+#include <QPixmap>
+#include <QPainter>
+#include <QSvgRenderer>
 
 #include "ui/AppController.h"
 #include "core/system/SystemMonitor.h"
@@ -13,6 +19,7 @@
 #include "ui/DepthRenderer.h"
 #include "ui/FaceOverlay.h"
 #include "ui/HistogramRenderer.h"
+#include "ui/SplashWindow.h"
 
 #include <cstdio>
 
@@ -20,16 +27,20 @@ using namespace Qt::StringLiterals;
 
 int main(int argc, char *argv[])
 {
-    QGuiApplication app(argc, argv);
+    QApplication::setHighDpiScaleFactorRoundingPolicy(
+        Qt::HighDpiScaleFactorRoundingPolicy::PassThrough);
+
+    QApplication app(argc, argv);
     app.setOrganizationName("SelkaCraft");
     app.setOrganizationDomain("selkacraft.com");
     app.setApplicationName("Alice Studio");
-    app.setApplicationVersion("0.2");
+    app.setApplicationVersion("0.1");
 
-    app.setWindowIcon(QIcon(":/qt/qml/Alice/UI/assets/alice_icon.png"));
+    // App icon set after splash painting below
 
     fprintf(stderr, "[Alice] Starting...\n");
 
+    // Load fonts first (lightweight)
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Regular.ttf");
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Medium.ttf");
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-SemiBold.ttf");
@@ -37,16 +48,122 @@ int main(int argc, char *argv[])
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/RobotoMono-Regular.ttf");
 
     QFont defaultFont("Inter");
-    defaultFont.setPixelSize(13);
+    defaultFont.setPixelSize(16);
     app.setFont(defaultFont);
+
+    // Splash screen — scale with screen DPI
+    auto *primaryScreen = app.primaryScreen();
+    qreal dpr = primaryScreen ? primaryScreen->devicePixelRatio() : 1.0;
+    int sw = qRound(520 * dpr), sh = qRound(320 * dpr);
+    int r = qRound(4 * dpr);  // consistent radius matching Theme.radiusSm
+
+    // Font sizes scaled
+    int titleSize = qRound(11 * dpr);
+    int subtitleSize = qRound(8 * dpr);
+    int metaSize = qRound(7 * dpr);
+    int logoSize = qRound(48 * dpr);
+    int logoW = qRound(44 * dpr), logoH = qRound(50 * dpr);
+    int margin = qRound(20 * dpr);
+    int barH = qRound(3 * dpr);
+    int barW = qRound(200 * dpr);
+    int footerH = qRound(64 * dpr);
+    int accentH = qRound(3 * dpr);
+
+    QPixmap splashPix(sw, sh);
+    splashPix.setDevicePixelRatio(dpr);
+    splashPix.fill(QColor("#2A3139"));
+    {
+        QPainter p(&splashPix);
+        p.setRenderHint(QPainter::Antialiasing);
+        // Use logical coordinates (dpr handled by pixmap)
+        int w = 520, h = 320;
+
+        // Top accent bar (primary blue)
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#2B95D6"));
+        p.drawRect(0, 0, w, 3);
+
+        // Footer (darker bg section)
+        p.setBrush(QColor("#1B2025"));
+        p.drawRect(0, h - 64, w, 64);
+        p.setPen(QPen(QColor("#394049"), 1));
+        p.drawLine(0, h - 64, w, h - 64);
+
+        // Content block vertically centered in the area above footer
+        // Available: 3 (accent) to h-64 (footer) = 253px
+        // Block: logo(50) + gap(14) + title(28) + gap(8) + subtitle(16) = 116px
+        int contentTop = 3 + (253 - 116) / 2;
+
+        // Logo
+        QSvgRenderer logoSvg(QString(":/qt/qml/Alice/UI/assets/icons/alice_logo.svg"));
+        if (logoSvg.isValid()) {
+            QRectF logoRect((w - 44) / 2.0, contentTop, 44, 50);
+            logoSvg.render(&p, logoRect);
+        }
+
+        // Title
+        QFont titleFont("Inter", 11, QFont::Bold);
+        titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 4);
+        titleFont.setCapitalization(QFont::AllUppercase);
+        p.setFont(titleFont);
+        p.setPen(QColor("#E1E8ED"));
+        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, "Alice Studio");
+
+        // Subtitle
+        p.setFont(QFont("Inter", 8));
+        p.setPen(QColor("#8A9BA8"));
+        p.drawText(QRect(0, contentTop + 100, w, 16), Qt::AlignHCenter,
+                   "Autofocus Lens Interface for Cinema Equipment");
+
+        // Loading bar — in footer section
+        int barY = h - 40;
+        int barX = (w - 200) / 2;
+        p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#394049"));
+        p.drawRoundedRect(barX, barY, 200, 3, 1, 1);
+        p.setBrush(QColor("#2B95D6"));
+        p.drawRoundedRect(barX, barY, 70, 3, 1, 1);
+
+        // Version — bottom right in footer
+        p.setFont(QFont("Inter", 7));
+        p.setPen(QColor("#5C6B7A"));
+        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v0.1");
+
+        // Copyright — bottom left in footer
+        p.drawText(QRect(16, h - 22, 200, 12), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");
+    }
+
+    // App icon — render SVG crisp at 256x256
+    QSvgRenderer iconSvg(QString(":/qt/qml/Alice/UI/assets/icons/alice_app_icon.svg"));
+    if (iconSvg.isValid()) {
+        QPixmap iconPix(256, 256);
+        iconPix.fill(Qt::transparent);
+        QPainter ip(&iconPix);
+        iconSvg.render(&ip);
+        ip.end();
+        app.setWindowIcon(QIcon(iconPix));
+    }
+
+    QSplashScreen splash(splashPix);
+    splash.show();
+    splash.showMessage("Initializing...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));
+    app.processEvents();
+
+    // Heavy initialization — keep pumping events so splash stays responsive
+    splash.showMessage("Loading UI framework...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));
+    app.processEvents();
 
     qputenv("QT_QUICK_CONTROLS_MATERIAL_VARIANT", "Dense");
     QQuickStyle::setStyle("Material");
+    app.processEvents();
 
     qmlRegisterType<alice::VideoRenderer>("Alice.Renderers", 1, 0, "VideoRenderer");
     qmlRegisterType<alice::DepthRenderer>("Alice.Renderers", 1, 0, "DepthRenderer");
     qmlRegisterType<alice::FaceOverlay>("Alice.Renderers", 1, 0, "FaceOverlay");
     qmlRegisterType<alice::HistogramRenderer>("Alice.Renderers", 1, 0, "HistogramRenderer");
+
+    splash.showMessage("Preparing engine...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));
+    app.processEvents();
 
     QQmlApplicationEngine engine;
     engine.addImportPath(u"qrc:/qt/qml"_s);
@@ -57,6 +174,9 @@ int main(int argc, char *argv[])
 
     alice::SystemMonitor sysMonitor;
     engine.rootContext()->setContextProperty("sysMonitor", &sysMonitor);
+
+    splash.showMessage("Loading interface...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));
+    app.processEvents();
 
     QQmlComponent component(&engine);
     const QUrl url(u"qrc:/qt/qml/Alice/UI/src/ui/qml/Main.qml"_s);
@@ -84,18 +204,31 @@ int main(int argc, char *argv[])
     }
 
     fprintf(stderr, "[Alice] Window created successfully.\n");
+
+    // Close splash when main window is shown
+    auto *mainWindow = qobject_cast<QWindow *>(rootObj);
+    if (mainWindow)
+        splash.finish(nullptr);  // Close immediately — main window is ready
+    else
+        splash.close();
+
     // initialize() is called from Main.qml Component.onCompleted
 
-    // Stop sync server before event loop exits so close frame gets sent
-    QObject::connect(&app, &QGuiApplication::aboutToQuit, &controller, [&controller]() {
-        fprintf(stderr, "[Alice] Shutting down sync server...\n");
+    // On quit: destroy QML tree FIRST (while controller is still valid),
+    // then wait for in-flight threads, then stop devices.
+    QObject::connect(&app, &QApplication::aboutToQuit, &controller, [&]() {
+        // Destroy QML tree before stopping devices
+        delete rootObj;
+        rootObj = nullptr;
+
+        // Wait for any in-flight QtConcurrent tasks (capture frame encoding)
+        QThreadPool::globalInstance()->waitForDone(2000);
+
+        fprintf(stderr, "[Alice] Shutting down...\n");
         controller.stopSyncServer();
     });
 
     int result = app.exec();
-
-    // Destroy QML tree before controller to prevent "alice is null" errors
-    delete rootObj;
 
     return result;
 }

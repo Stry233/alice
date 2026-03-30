@@ -8,7 +8,7 @@ Rectangle {
     property real panY: 0.0
 
     visible: zoomLevel > 1.0
-    width: 60; height: 40
+    width: Theme.dp(60); height: Theme.dp(40)
     color: Qt.rgba(0.106, 0.125, 0.145, 0.85)
     border.width: 1; border.color: Theme.border; radius: Theme.radiusSm
 

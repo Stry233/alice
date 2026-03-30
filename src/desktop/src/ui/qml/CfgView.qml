@@ -13,15 +13,15 @@ Item {
         anchors.fill: parent
         spacing: 0
 
-        // Sub-tab bar
+        // Sub-tab bar — height dp(48), font dp(22), indicator dp(4)
         Rectangle {
             Layout.fillWidth: true
-            height: 32
+            height: Theme.dp(48)
             color: Theme.surface
 
             RowLayout {
                 anchors.fill: parent
-                anchors.leftMargin: 12
+                anchors.leftMargin: Theme.dp(24)
                 spacing: 0
 
                 Repeater {
@@ -32,7 +32,7 @@ Item {
                         required property int index
 
                         Layout.preferredWidth: implicitWidth
-                        implicitWidth: tabLabel.implicitWidth + 32
+                        implicitWidth: tabLabel.implicitWidth + Theme.dp(64)
                         Layout.fillHeight: true
 
                         Text {
@@ -40,14 +40,14 @@ Item {
                             anchors.centerIn: parent
                             text: modelData
                             font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeCaption
+                            font.pixelSize: Theme.fontSizeSmall
                             font.weight: currentTab === index ? Font.DemiBold : Font.Normal
                             color: currentTab === index ? Theme.textPrimary : Theme.textSecondary
                         }
 
                         Rectangle {
                             anchors.bottom: parent.bottom
-                            width: parent.width; height: 2
+                            width: parent.width; height: Theme.dp(4)
                             color: currentTab === index ? Theme.primary : "transparent"
                         }
 

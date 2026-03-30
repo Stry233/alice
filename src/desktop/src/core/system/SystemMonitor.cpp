@@ -1,7 +1,6 @@
 #include "core/system/SystemMonitor.h"
-#include <QFile>
-#include <QTextStream>
-#include <QProcess>
+#include <cstdio>
+#include <cstring>
 
 namespace alice {
 
@@ -29,23 +28,21 @@ QString SystemMonitor::memoryFormatted() const {
 }
 
 void SystemMonitor::readCpuUsage() {
-    QFile file("/proc/stat");
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
+    // Use C I/O — faster than QFile/QTextStream, no heap allocation
+    FILE *f = fopen("/proc/stat", "r");
+    if (!f) return;
+
+    char buf[256];
+    if (!fgets(buf, sizeof(buf), f)) { fclose(f); return; }
+    fclose(f);
+
+    // Parse "cpu  user nice system idle iowait irq softirq steal"
+    long long user, nice, system, idle, iowait, irq, softirq, steal;
+    if (sscanf(buf, "cpu %lld %lld %lld %lld %lld %lld %lld %lld",
+               &user, &nice, &system, &idle, &iowait, &irq, &softirq, &steal) < 4)
         return;
 
-    QString line = QTextStream(&file).readLine();
-    file.close();
-
-    QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-    if (parts.size() < 5 || parts[0] != "cpu")
-        return;
-
-    long long total = 0;
-    for (int i = 1; i < parts.size(); ++i)
-        total += parts[i].toLongLong();
-
-    long long idle = parts[4].toLongLong();
-
+    long long total = user + nice + system + idle + iowait + irq + softirq + steal;
     long long totalDelta = total - prevCpuTotal_;
     long long idleDelta = idle - prevCpuIdle_;
 
@@ -57,41 +54,45 @@ void SystemMonitor::readCpuUsage() {
 }
 
 void SystemMonitor::readMemoryUsage() {
-    QFile file("/proc/self/status");
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text))
-        return;
+    FILE *f = fopen("/proc/self/status", "r");
+    if (!f) return;
 
-    QTextStream stream(&file);
-    while (!stream.atEnd()) {
-        QString line = stream.readLine();
-        if (line.startsWith("VmRSS:")) {
-            QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-            if (parts.size() >= 2)
-                memoryUsage_ = parts[1].toDouble() * 1024.0;
+    char buf[256];
+    while (fgets(buf, sizeof(buf), f)) {
+        if (strncmp(buf, "VmRSS:", 6) == 0) {
+            long kb = 0;
+            sscanf(buf + 6, " %ld", &kb);
+            memoryUsage_ = static_cast<double>(kb) * 1024.0;
             break;
         }
     }
+    fclose(f);
 }
 
 void SystemMonitor::readGpuUsage() {
-    QFile nvFile("/proc/driver/nvidia/gpus/0/utilization");
-    if (nvFile.exists() && nvFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        QTextStream stream(&nvFile);
-        while (!stream.atEnd()) {
-            QString line = stream.readLine();
-            if (line.contains("Gpu")) {
-                QStringList parts = line.split(QRegularExpression("\\s+"), Qt::SkipEmptyParts);
-                if (parts.size() >= 2)
-                    gpuUsage_ = parts[1].toDouble();
+    // NVIDIA
+    FILE *f = fopen("/proc/driver/nvidia/gpus/0/utilization", "r");
+    if (f) {
+        char buf[256];
+        while (fgets(buf, sizeof(buf), f)) {
+            if (strstr(buf, "Gpu")) {
+                int val = 0;
+                sscanf(strstr(buf, "Gpu") + 3, " %d", &val);
+                gpuUsage_ = val;
                 break;
             }
         }
+        fclose(f);
         return;
     }
 
-    QFile drmFile("/sys/class/drm/card0/device/gpu_busy_percent");
-    if (drmFile.open(QIODevice::ReadOnly | QIODevice::Text)) {
-        gpuUsage_ = QTextStream(&drmFile).readLine().trimmed().toDouble();
+    // AMD/Intel DRM
+    f = fopen("/sys/class/drm/card0/device/gpu_busy_percent", "r");
+    if (f) {
+        int val = 0;
+        fscanf(f, "%d", &val);
+        gpuUsage_ = val;
+        fclose(f);
         return;
     }
 

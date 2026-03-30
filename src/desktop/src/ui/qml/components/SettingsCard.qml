@@ -11,7 +11,7 @@ Rectangle {
     border.width: 1
     border.color: Theme.border
     radius: Theme.radiusSm
-    implicitHeight: mainColumn.implicitHeight + 2 * 12
+    implicitHeight: mainColumn.implicitHeight + 2 * Theme.dp(24)
 
     Layout.columnSpan: columnSpan
     Layout.fillWidth: true
@@ -19,14 +19,14 @@ Rectangle {
     ColumnLayout {
         id: mainColumn
         anchors.fill: parent
-        anchors.margins: 12
-        spacing: 10
+        anchors.margins: Theme.dp(24)
+        spacing: Theme.dp(16)
 
         Text {
             visible: title !== ""
             text: title.toUpperCase()
             font.family: Theme.fontFamily
-            font.pixelSize: 10
+            font.pixelSize: Theme.fontSizeSmall
             font.weight: Font.DemiBold
             font.letterSpacing: 1.0
             color: Theme.textPrimary

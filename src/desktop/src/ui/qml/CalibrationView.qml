@@ -3,60 +3,161 @@ import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
+import QtQuick.Dialogs
 import Alice.Renderers 1.0
 
 Item {
     id: calibView
     property var calibrationPoints: []
 
+    FileDialog {
+        id: exportDialog
+        title: "Export Calibration Mapping"
+        fileMode: FileDialog.SaveFile
+        nameFilters: ["JSON files (*.json)"]
+        onAccepted: {
+            // TODO: export calibrationPoints to selectedFile
+        }
+    }
+
+    // Force QML to detect array changes by reassigning
+    function addPoint(pt) {
+        var arr = calibrationPoints.slice()
+        arr.push(pt)
+        calibrationPoints = arr
+    }
+    function removePoint(idx) {
+        var arr = calibrationPoints.slice()
+        arr.splice(idx, 1)
+        calibrationPoints = arr
+    }
+    function clearPoints() {
+        calibrationPoints = []
+    }
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        // LEFT: Motor + Previews (200px)
+        // LEFT: Motor + Previews — dp(400)
         ColumnLayout {
-            Layout.preferredWidth: Theme.sidebarNarrow
+            Layout.preferredWidth: Theme.dp(400)
+            Layout.minimumWidth: Theme.dp(400)
+            Layout.maximumWidth: Theme.dp(400)
             Layout.fillHeight: true
             spacing: 0
 
-            // Motor control
+            // Motor control — content-driven, capped height
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: motorSection.implicitHeight + 20; color: Theme.bg
+                Layout.fillWidth: true
+                Layout.preferredHeight: motorSection.implicitHeight + Theme.dp(40)
+                Layout.maximumHeight: motorSection.implicitHeight + Theme.dp(40)
+                color: Theme.bg
                 ColumnLayout {
-                    id: motorSection; anchors.fill: parent; anchors.margins: 10; spacing: 6
+                    id: motorSection; anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
                     SectionHeader { text: "MOTOR CONTROL" }
-                    MotorSlider { Layout.fillWidth: true; motorPos: alice ? alice.motorPosition : 0; enabled: alice ? alice.motorConnected : false; onMotorMoved: (pos) => { if (alice) alice.setMotorPosition(pos) } }
-                }
-            }
-            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-
-            // Camera preview
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: cameraPreviewCol.implicitHeight + 16; color: Theme.bg
-                ColumnLayout {
-                    id: cameraPreviewCol; anchors.fill: parent; anchors.margins: 8; spacing: 4
-                    Text { text: "CAMERA"; font.pixelSize: 8; color: Theme.textDisabled }
-                    Rectangle {
-                        Layout.fillWidth: true; Layout.preferredHeight: width * 9 / 16; color: Theme.well; radius: Theme.radiusSm
-                        VideoRenderer { anchors.fill: parent; source: alice ? alice.captureFrame : null; visible: alice ? alice.captureCardConnected : false }
-                        Label { anchors.centerIn: parent; text: "No camera"; font.pixelSize: 10; color: Theme.textPlaceholder; visible: alice ? !alice.captureCardConnected : true }
+                    MotorSlider {
+                        Layout.fillWidth: true
+                        motorPos: alice ? alice.motorPosition : 0
+                        enabled: alice ? alice.motorConnected : false
+                        onMotorMoved: (pos) => { if (alice) alice.setMotorPosition(pos) }
                     }
                 }
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-            // Depth preview
-            Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: depthPreviewCol.implicitHeight + 16; color: Theme.bg
+            // Camera preview — fills height, max capped, high priority
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Theme.dp(200)
+                Layout.maximumHeight: Theme.dp(250)
+
                 ColumnLayout {
-                    id: depthPreviewCol; anchors.fill: parent; anchors.margins: 8; spacing: 4
+                    id: cameraPreviewCol; anchors.fill: parent; anchors.margins: Theme.dp(16); spacing: Theme.dp(8)
+                    Text { text: "CAMERA"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        color: Theme.well; radius: Theme.radiusSm; clip: true
+
+                        // Zoomable camera container
+                        property real zoomLevel: 1.0
+                        property real panX: 0.5
+                        property real panY: 0.5
+
+                        Item {
+                            id: calibCamContainer
+                            property real zw: parent.width * parent.zoomLevel
+                            property real zh: parent.height * parent.zoomLevel
+                            width: zw; height: zh
+                            x: -(zw - parent.width) * parent.panX
+                            y: -(zh - parent.height) * parent.panY
+
+                            VideoRenderer { anchors.fill: parent; source: alice ? alice.captureFrame : null; visible: alice ? alice.captureCardConnected : false }
+                            Label { anchors.centerIn: parent; text: "No camera"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textPlaceholder; visible: alice ? !alice.captureCardConnected : true }
+                        }
+
+                        MouseArea {
+                            anchors.fill: parent
+                            property bool isDragging: false
+                            property real dragStartX: 0; property real dragStartY: 0
+                            property real panStartX: 0; property real panStartY: 0
+                            cursorShape: parent.zoomLevel > 1.0 ? Qt.OpenHandCursor : Qt.ArrowCursor
+
+                            onPressed: (mouse) => {
+                                if (parent.zoomLevel > 1.0) {
+                                    isDragging = true; dragStartX = mouse.x; dragStartY = mouse.y
+                                    panStartX = parent.panX; panStartY = parent.panY
+                                }
+                            }
+                            onPositionChanged: (mouse) => {
+                                if (isDragging) {
+                                    parent.panX = Math.max(0, Math.min(1, panStartX - (mouse.x - dragStartX) / width))
+                                    parent.panY = Math.max(0, Math.min(1, panStartY - (mouse.y - dragStartY) / height))
+                                }
+                            }
+                            onReleased: isDragging = false
+                            onWheel: (wheel) => {
+                                if (wheel.angleDelta.y > 0) parent.zoomLevel = Math.min(4.0, parent.zoomLevel + 0.1)
+                                else parent.zoomLevel = Math.max(1.0, parent.zoomLevel - 0.1)
+                                if (parent.zoomLevel <= 1.0) { parent.panX = 0.5; parent.panY = 0.5 }
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Depth preview — fills height, max capped, high priority
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.preferredHeight: Theme.dp(200)
+                Layout.maximumHeight: Theme.dp(250)
+
+                ColumnLayout {
+                    id: depthPreviewCol; anchors.fill: parent; anchors.margins: Theme.dp(16); spacing: Theme.dp(8)
                     RowLayout {
-                        Text { text: "DEPTH"; font.pixelSize: 8; color: Theme.textDisabled; Layout.fillWidth: true }
-                        Text { text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "\u2014"; font.family: Theme.fontFamilyMono; font.pixelSize: 10; color: Theme.success }
+                        Text { text: "DEPTH"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled; Layout.fillWidth: true }
+                        Row {
+                            spacing: Theme.dp(6)
+                            Text {
+                                text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "\u2014"
+                                font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.Bold
+                                color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                            }
+                            Text {
+                                visible: alice ? alice.depth > 0 : false
+                                text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
+                                font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeMicro
+                                color: Theme.textSecondary
+                                anchors.baseline: parent.children[0].baseline
+                            }
+                        }
                     }
                     Rectangle {
-                        Layout.fillWidth: true; Layout.preferredHeight: width * 3 / 4; color: Theme.well; radius: Theme.radiusSm
-                        VideoRenderer { anchors.centerIn: parent; width: Math.min(parent.width, parent.height * 4 / 3); height: width * 3 / 4; source: alice ? alice.colorFrame : null; visible: alice ? alice.realSenseConnected : false }
+                        Layout.fillWidth: true; Layout.fillHeight: true; color: Theme.well; radius: Theme.radiusSm
+                        VideoRenderer { anchors.fill: parent; source: alice ? alice.colorFrame : null; visible: alice ? alice.realSenseConnected : false }
                         Item {
                             property real normX: alice ? alice.measureX : 0.5; property real normY: alice ? alice.measureY : 0.5
                             x: normX * parent.width - 6; y: normY * parent.height - 6; width: 12; height: 12; visible: alice ? alice.realSenseConnected : false
@@ -64,53 +165,60 @@ Item {
                             Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 12; color: "#fff" }
                         }
                         MouseArea {
-                            anchors.fill: parent; cursorShape: Qt.CrossCursor; property bool dragging: false
-                            onPressed: (mouse) => { dragging = true; updatePos(mouse.x, mouse.y) }
-                            onPositionChanged: (mouse) => { if (dragging) updatePos(mouse.x, mouse.y) }
-                            onReleased: dragging = false
+                            anchors.fill: parent; cursorShape: Qt.CrossCursor; property bool isDragging: false
+                            onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
+                            onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                            onReleased: isDragging = false
                             function updatePos(mx, my) { if (alice) alice.setMeasurementPosition(Math.max(0, Math.min(1, mx / width)), Math.max(0, Math.min(1, my / height))) }
                         }
                     }
                 }
             }
+            // Absorb overflow when both previews are at max height
+            Item { Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: 0 }
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
-
-            // Actions
-            ColumnLayout {
-                Layout.fillWidth: true; Layout.margins: 8; spacing: 4
-                CheckBox { text: "Test mode"; Material.accent: Theme.primary }
-                Button {
-                    text: "Record Point"; Layout.fillWidth: true; Material.background: Theme.primary
-                    enabled: alice ? (alice.motorConnected && alice.realSenseConnected && alice.depth > 0 && alice.depthConfidence >= 0.5) : false
-                    onClicked: {
-                        if (!alice) return
-                        calibrationPoints.push({ depth: alice.depth, motorPosition: alice.motorPosition, confidence: alice.depthConfidence })
-                        calibrationPointsChanged()
+            RowLayout {
+                Layout.fillWidth: true; Layout.margins: Theme.dp(12); spacing: Theme.dp(8)
+                CheckBox { text: "Test mode"; Material.accent: Theme.primary; font.pixelSize: Theme.fontSizeMicro }
+                Rectangle {
+                    Layout.fillWidth: true; height: Theme.dp(40); radius: Theme.radiusSm
+                    color: (alice && alice.motorConnected && alice.realSenseConnected && alice.depth > 0 && alice.depthConfidence >= 0.5) ? Theme.primary : Theme.surface
+                    opacity: (alice && alice.motorConnected && alice.realSenseConnected && alice.depth > 0 && alice.depthConfidence >= 0.5) ? 1.0 : 0.4
+                    Text { anchors.centerIn: parent; text: "Record Point"; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold; color: "#fff" }
+                    MouseArea {
+                        anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                        enabled: alice ? (alice.motorConnected && alice.realSenseConnected && alice.depth > 0 && alice.depthConfidence >= 0.5) : false
+                        onClicked: {
+                            if (!alice) return
+                            calibView.addPoint({ depth: alice.depth, motorPosition: alice.motorPosition, confidence: alice.depthConfidence })
+                        }
                     }
                 }
             }
-
-            Item { Layout.fillHeight: true }
         }
 
         Rectangle { Layout.fillHeight: true; width: 1; color: Theme.border }
 
-        // CENTER: Data table (280px)
+        // CENTER: Data table
         CalibrationTable {
-            Layout.preferredWidth: 280; Layout.fillHeight: true
+            Layout.preferredWidth: Theme.dp(560)
+            Layout.minimumWidth: Theme.dp(360)
+            Layout.maximumWidth: Theme.dp(600)
+            Layout.fillHeight: true
             points: calibrationPoints
-            onPointRemoved: (index) => { calibrationPoints.splice(index, 1); calibrationPointsChanged() }
+            onPointRemoved: (index) => calibView.removePoint(index)
             onExportRequested: exportDialog.open()
-            onClearRequested: { calibrationPoints = []; calibrationPointsChanged() }
+            onClearRequested: calibView.clearPoints()
         }
 
         Rectangle { Layout.fillHeight: true; width: 1; color: Theme.border }
 
         // RIGHT: Graph (flex)
         CalibrationGraph {
-            Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: 12
+            Layout.fillWidth: true; Layout.fillHeight: true; Layout.margins: Theme.dp(20)
             points: calibrationPoints
             currentMotorPos: alice ? alice.motorPosition : 0
+            currentDepth: alice ? alice.depth : 0
         }
     }
 

@@ -3,21 +3,18 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import Alice.UI
 
-ColumnLayout {
+Item {
     property string text: ""
-    spacing: Theme.spaceXs
+    implicitHeight: label.implicitHeight
+    Layout.fillWidth: true
 
-    Label {
+    Text {
+        id: label
         text: parent.text.toUpperCase()
         font.family: Theme.fontFamily
-        font.pixelSize: Theme.fontSizeCaption
+        font.pixelSize: Theme.sectionFontSize
         font.weight: Font.DemiBold
         font.letterSpacing: Theme.sectionLetterSpacing
         color: Theme.textSecondary
-    }
-    Rectangle {
-        Layout.fillWidth: true
-        height: 1
-        color: Theme.border
     }
 }
