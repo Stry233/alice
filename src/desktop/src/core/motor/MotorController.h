@@ -21,6 +21,8 @@ class MotorController : public QObject {
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(int position READ currentPosition NOTIFY positionChanged)
     Q_PROPERTY(int destinationAddress READ destinationAddress NOTIFY destinationChanged)
+    Q_PROPERTY(qint64 connectedSinceMs READ connectedSinceMs NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 lastDisconnectMs READ lastDisconnectMs NOTIFY connectionChanged)
 
 public:
     // Known USB identifiers for nRF52840 dongle
@@ -33,6 +35,8 @@ public:
     bool isConnected() const { return connected_; }
     int currentPosition() const { return position_; }
     int destinationAddress() const { return destAddress_; }
+    qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
+    qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
 
 public slots:
     /** Discover and connect to the motor dongle. */
@@ -92,6 +96,10 @@ private:
     std::atomic<bool> connected_{false};
     std::atomic<int> position_{0};
     int destAddress_ = 0xFFFF;
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    std::atomic<qint64> connectedSinceMs_{0};
+    std::atomic<qint64> lastDisconnectMs_{0};
 
     // Smoothing
     bool smoothingEnabled_ = true;

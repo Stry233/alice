@@ -61,6 +61,11 @@ class SyncClient(
     private var pendingStreamDepth_ = true
     private var pendingStreamCapture_ = true
 
+    // Per-type frame counters for diagnostic logging
+    private var colorFrameCount = 0
+    private var depthFrameCount = 0
+    private var captureFrameCount = 0
+
     fun connect(ip: String, port: Int, sessionToken: String) {
         disconnect()
         intentionalDisconnect = false
@@ -116,12 +121,25 @@ class SyncClient(
                 }
 
                 when (frameType) {
-                    FRAME_TYPE_COLOR -> _remoteColorBitmap.value = bitmap
-                    FRAME_TYPE_DEPTH -> _remoteDepthBitmap.value = bitmap
+                    FRAME_TYPE_COLOR -> {
+                        if (colorFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Color frame #$colorFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
+                        _remoteColorBitmap.value = bitmap
+                    }
+                    FRAME_TYPE_DEPTH -> {
+                        if (depthFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Depth frame #$depthFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
+                        _remoteDepthBitmap.value = bitmap
+                    }
                     FRAME_TYPE_CAPTURE -> {
-                        Log.d(TAG, "Capture frame received: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        if (captureFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Capture frame #$captureFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
                         _remoteCaptureFrame.value = bitmap
                     }
+                    else -> Log.w(TAG, "Unknown frame type=$frameType size=${bytes.size}")
                 }
             }
 

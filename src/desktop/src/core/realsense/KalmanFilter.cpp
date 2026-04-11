@@ -2,8 +2,19 @@
 
 namespace alice {
 
-KalmanFilter::KalmanFilter() {
-    history_.reserve(kHistorySize);
+KalmanFilter::KalmanFilter() = default;
+
+void KalmanFilter::pushHistory(float value) {
+    history_[historyHead_] = value;
+    historyHead_ = (historyHead_ + 1) % kHistorySize;
+    if (historyCount_ < kHistorySize) ++historyCount_;
+}
+
+float KalmanFilter::lastHistory() const {
+    // Most recently inserted value — the slot one before the head,
+    // wrapping around. Caller must ensure historyCount_ > 0.
+    const int idx = (historyHead_ - 1 + kHistorySize) % kHistorySize;
+    return history_[idx];
 }
 
 float KalmanFilter::update(float measurement, int64_t timestampMs) {
@@ -17,7 +28,7 @@ float KalmanFilter::update(float measurement, int64_t timestampMs) {
         P_ = 1000.0f;
         initialized_ = true;
         lastUpdateTime_ = timestampMs;
-        history_.push_back(measurement);
+        pushHistory(measurement);
         return x_;
     }
 
@@ -49,11 +60,8 @@ float KalmanFilter::update(float measurement, int64_t timestampMs) {
     // Update error covariance
     P_ = (1.0f - K) * P_pred;
 
-    // Add to history
-    history_.push_back(measurement);
-    if (static_cast<int>(history_.size()) > kHistorySize) {
-        history_.erase(history_.begin());
-    }
+    // Add to history (O(1) ring-buffer insert)
+    pushHistory(measurement);
 
     return x_;
 }
@@ -77,7 +85,8 @@ void KalmanFilter::reset() {
     P_ = 1000.0f;
     initialized_ = false;
     lastUpdateTime_ = 0;
-    history_.clear();
+    historyCount_ = 0;
+    historyHead_ = 0;
     Q_ = 50.0f;
     R_ = 100.0f;
 }
@@ -87,24 +96,29 @@ bool KalmanFilter::isReady() const {
 }
 
 void KalmanFilter::adaptNoiseParameters(float measurement) {
-    if (history_.size() < 3) return;
+    if (historyCount_ < 3) return;
 
-    // Calculate measurement variance
-    float mean = std::accumulate(history_.begin(), history_.end(), 0.0f)
-                 / static_cast<float>(history_.size());
+    // Mean and variance are order-invariant, so we can just iterate the
+    // valid slots of the ring buffer in index order without reconstructing
+    // the chronological sequence.
+    float sum = 0.0f;
+    for (int i = 0; i < historyCount_; ++i) sum += history_[i];
+    const float invN = 1.0f / static_cast<float>(historyCount_);
+    const float mean = sum * invN;
+
     float variance = 0.0f;
-    for (float v : history_) {
-        float diff = v - mean;
+    for (int i = 0; i < historyCount_; ++i) {
+        const float diff = history_[i] - mean;
         variance += diff * diff;
     }
-    variance /= static_cast<float>(history_.size());
-    float stdDev = std::sqrt(variance);
+    variance *= invN;
+    const float stdDev = std::sqrt(variance);
 
     // Adapt measurement noise (R) based on recent stability
     R_ = std::clamp(50.0f + stdDev * 0.5f, 20.0f, 500.0f);
 
     // Adapt process noise (Q) based on depth change rate
-    float recentChange = std::abs(measurement - history_.back());
+    const float recentChange = std::abs(measurement - lastHistory());
 
     if (recentChange > 100.0f) {
         Q_ = 100.0f;  // Fast motion

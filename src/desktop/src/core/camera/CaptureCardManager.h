@@ -23,12 +23,16 @@ namespace alice {
 class CaptureCardManager : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 connectedSinceMs READ connectedSinceMs NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 lastDisconnectMs READ lastDisconnectMs NOTIFY connectionChanged)
 
 public:
     explicit CaptureCardManager(QObject *parent = nullptr);
     ~CaptureCardManager() override;
 
     bool isConnected() const { return connected_; }
+    qint64 connectedSinceMs() const { return connectedSinceMs_; }
+    qint64 lastDisconnectMs() const { return lastDisconnectMs_; }
 
     Q_INVOKABLE QStringList availableDevices() const;
     Q_INVOKABLE QVariantList availableFormats() const;
@@ -56,6 +60,10 @@ private:
     std::unique_ptr<QMediaCaptureSession> session_;
     std::unique_ptr<QVideoSink> sink_;
     bool connected_ = false;
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    qint64 connectedSinceMs_ = 0;
+    qint64 lastDisconnectMs_ = 0;
 
     // Configurable resolution (0 = use device default)
     int requestedWidth_ = 0;

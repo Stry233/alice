@@ -124,6 +124,14 @@ data class SyncMessage(
             }
             return SyncMessage(type = "HEARTBEAT", payload = payloadMap)
         }
+
+        fun measurePosition(x: Float, y: Float): SyncMessage {
+            val payloadMap = buildJsonMap {
+                put("x", x)
+                put("y", y)
+            }
+            return SyncMessage(type = "MEASURE_POSITION", payload = payloadMap)
+        }
     }
 }
 

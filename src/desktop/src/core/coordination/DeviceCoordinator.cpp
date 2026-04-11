@@ -76,20 +76,76 @@ void DeviceCoordinator::onCaptureCardConnectionChanged(bool connected) {
 void DeviceCoordinator::healthCheck() {
     if (!started_) return;
 
-    // Reconnect motor if disconnected
-    if (!motorConnected_) {
+    // Reconnect motor if disconnected (unless user disconnected it)
+    if (!motorConnected_ && !motorManualDc_) {
         motor_->connectDevice();
     }
 
-    // Restart RealSense if disconnected
-    if (!realSenseConnected_) {
+    // Restart RealSense if disconnected (unless user disconnected it)
+    if (!realSenseConnected_ && !realSenseManualDc_) {
         realsense_->start();
     }
 
-    // Restart capture card if disconnected
-    if (!captureCardConnected_) {
+    // Restart capture card if disconnected (unless user disconnected it)
+    if (!captureCardConnected_ && !captureCardManualDc_) {
         captureCard_->start();
     }
+}
+
+// ── User-initiated device control ───────────────────────────────────
+
+void DeviceCoordinator::disconnectMotor() {
+    motorManualDc_ = true;
+    motor_->disconnectDevice();
+}
+
+void DeviceCoordinator::reconnectMotor() {
+    motorManualDc_ = false;
+    motor_->connectDevice();
+}
+
+void DeviceCoordinator::restartMotor() {
+    motorManualDc_ = false;
+    motor_->disconnectDevice();
+    QTimer::singleShot(kRestartDelayMs, this, [this]() {
+        if (!motorManualDc_) motor_->connectDevice();
+    });
+}
+
+void DeviceCoordinator::disconnectRealSense() {
+    realSenseManualDc_ = true;
+    realsense_->stop();
+}
+
+void DeviceCoordinator::reconnectRealSense() {
+    realSenseManualDc_ = false;
+    realsense_->start();
+}
+
+void DeviceCoordinator::restartRealSense() {
+    realSenseManualDc_ = false;
+    realsense_->stop();
+    QTimer::singleShot(kRestartDelayMs, this, [this]() {
+        if (!realSenseManualDc_) realsense_->start();
+    });
+}
+
+void DeviceCoordinator::disconnectCaptureCard() {
+    captureCardManualDc_ = true;
+    captureCard_->stop();
+}
+
+void DeviceCoordinator::reconnectCaptureCard() {
+    captureCardManualDc_ = false;
+    captureCard_->start();
+}
+
+void DeviceCoordinator::restartCaptureCard() {
+    captureCardManualDc_ = false;
+    captureCard_->stop();
+    QTimer::singleShot(kRestartDelayMs, this, [this]() {
+        if (!captureCardManualDc_) captureCard_->start();
+    });
 }
 
 } // namespace alice

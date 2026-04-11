@@ -114,12 +114,32 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     private val _remoteAutofocusEnabled = MutableStateFlow(false)
     private val _remoteIsActivelyFocusing = MutableStateFlow(false)
     private val _remoteMotorConnected = MutableStateFlow(false)
-    private var _remoteCaptureConnected = false
+    private val _remoteCaptureConnectedFlow = MutableStateFlow(false)
+    // Legacy alias: var-like access for the existing STATE_UPDATE handler code
+    // below. Keeps call sites succinct without exposing the MutableStateFlow.
+    private var _remoteCaptureConnected: Boolean
+        get() = _remoteCaptureConnectedFlow.value
+        set(value) { _remoteCaptureConnectedFlow.value = value }
     private val _remoteMeasureX = MutableStateFlow(0.5f)
     private val _remoteMeasureY = MutableStateFlow(0.5f)
     val remoteMeasureX: StateFlow<Float> = _remoteMeasureX.asStateFlow()
     val remoteMeasureY: StateFlow<Float> = _remoteMeasureY.asStateFlow()
     private val _remoteRealSenseConnected = MutableStateFlow(false)
+
+    // Face-tracking bounding boxes broadcast from the remote desktop.
+    // All coordinates are normalised (0..1) in the source frame space.
+    data class RemoteFace(
+        val id: Int,
+        val x: Float, val y: Float, val w: Float, val h: Float,
+        val centerX: Float, val centerY: Float,
+        val confidence: Float,
+        val state: Int,
+        val selected: Boolean,
+        val leftEyeX: Float?, val leftEyeY: Float?,
+        val rightEyeX: Float?, val rightEyeY: Float?
+    )
+    private val _remoteFaces = MutableStateFlow<List<RemoteFace>>(emptyList())
+    val remoteFaces: StateFlow<List<RemoteFace>> = _remoteFaces.asStateFlow()
 
     // Unified data layer: indicates whether the UI is showing local, remote, or no data
     enum class DataSource { LOCAL, REMOTE, NONE }
@@ -197,6 +217,54 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                         msg.payload["measureY"]?.let {
                             try { _remoteMeasureY.value = it.toString().toDouble().toFloat() }
                             catch (_: Exception) {}
+                        }
+                    }
+                    "MEASURE_POSITION" -> {
+                        // Dedicated crosshair update — arrives immediately after a PC-side
+                        // tap rather than waiting for the next 10 Hz STATE_UPDATE tick.
+                        msg.payload["x"]?.let {
+                            try { _remoteMeasureX.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                        msg.payload["y"]?.let {
+                            try { _remoteMeasureY.value = it.toString().toDouble().toFloat() }
+                            catch (_: Exception) {}
+                        }
+                    }
+                    "FACE_TRACKING" -> {
+                        // Desktop is broadcasting detected / tracked faces so we can
+                        // overlay the same bounding boxes on the Android preview.
+                        val selectedId = (msg.payload["selectedId"] as? kotlinx.serialization.json.JsonPrimitive)
+                            ?.content?.toIntOrNull() ?: -1
+                        val facesArray = msg.payload["faces"] as? kotlinx.serialization.json.JsonArray
+                        if (facesArray != null) {
+                            val parsed = facesArray.mapNotNull { elem ->
+                                val obj = elem as? kotlinx.serialization.json.JsonObject ?: return@mapNotNull null
+                                fun f(key: String): Float? =
+                                    (obj[key] as? kotlinx.serialization.json.JsonPrimitive)
+                                        ?.content?.toFloatOrNull()
+                                fun i(key: String): Int =
+                                    (obj[key] as? kotlinx.serialization.json.JsonPrimitive)
+                                        ?.content?.toIntOrNull() ?: 0
+                                val id = i("id")
+                                RemoteFace(
+                                    id = id,
+                                    x = f("x") ?: 0f, y = f("y") ?: 0f,
+                                    w = f("w") ?: 0f, h = f("h") ?: 0f,
+                                    centerX = f("centerX") ?: 0f,
+                                    centerY = f("centerY") ?: 0f,
+                                    confidence = f("confidence") ?: 0f,
+                                    state = i("state"),
+                                    selected = (id == selectedId),
+                                    leftEyeX = f("leftEyeX"),
+                                    leftEyeY = f("leftEyeY"),
+                                    rightEyeX = f("rightEyeX"),
+                                    rightEyeY = f("rightEyeY"),
+                                )
+                            }
+                            _remoteFaces.value = parsed
+                        } else {
+                            _remoteFaces.value = emptyList()
                         }
                     }
                     "MODE_CHANGE" -> {
@@ -458,6 +526,48 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
             else if (synced) remote
             else null
         }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
+
+    // Whether the capture card is operational (local OR remote via sync).
+    // Mirrors effectiveMotorConnected / effectiveRealSenseConnected for symmetry.
+    val effectiveCaptureCardConnected: StateFlow<Boolean> by lazy {
+        combine(
+            cameraConnectionState,
+            _remoteCaptureConnectedFlow,
+            syncClient.connected
+        ) { localConn, remoteConnected, synced ->
+            localConn.isOperational() || (synced && remoteConnected)
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, false)
+    }
+
+    // Active / total device counts used by the DeviceStatusIndicator header.
+    // When synced to a desktop the counts reflect the PC's three device slots
+    // (motor, depth, camera) so the UI reads "N/3" — matching what the user
+    // expects whether or not Android has any local USB devices attached.
+    val effectiveActiveDeviceCount: StateFlow<Int> by lazy {
+        combine(
+            effectiveMotorConnected,
+            effectiveRealSenseConnected,
+            effectiveCaptureCardConnected
+        ) { motor, rs, cam ->
+            var n = 0
+            if (motor) n++
+            if (rs) n++
+            if (cam) n++
+            n
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
+    }
+
+    val effectiveTotalDeviceSlots: StateFlow<Int> by lazy {
+        combine(
+            coordinatorState,
+            syncClient.connected
+        ) { local, synced ->
+            // In sync mode the desktop exposes a fixed triple of device slots.
+            // Locally, fall back to the number of USB devices the coordinator
+            // knows about.
+            if (synced) 3 else local.connectedDevices.size
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, 0)
     }
 
     val effectiveAutofocusEnabled: StateFlow<Boolean> by lazy {
@@ -722,21 +832,20 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
         )
     }
 
-    // Tap-to-focus handler - delegated to autofocus coordinator
+    // Tap-to-focus handler — delegated to autofocus coordinator.
+    //
+    // In sync mode we ALWAYS push the crosshair to the desktop so the other
+    // side can mirror it, regardless of whether a local RealSense is attached.
+    // If a local RealSense exists, we additionally apply the tap locally so
+    // its own autofocus/measurement state stays in lockstep.
     fun setRealSenseMeasurementPosition(normalizedX: Float, normalizedY: Float) {
-        if (syncClient.connected.value && !realSenseConnectionState.value.isOperational()) {
-            // Remote mode: send position to desktop
+        if (syncClient.connected.value) {
             android.util.Log.d("CameraViewModel", "Sending MEASURE_POSITION: x=$normalizedX y=$normalizedY")
-            val payload = com.selkacraft.alice.comm.network.buildJsonMap {
-                put("x", normalizedX)
-                put("y", normalizedY)
-            }
-            syncClient.send(com.selkacraft.alice.comm.network.SyncMessage(
-                type = "MEASURE_POSITION",
-                payload = payload
-            ))
-        } else {
-            // Local mode: set directly on hardware
+            syncClient.send(
+                com.selkacraft.alice.comm.network.SyncMessage.measurePosition(normalizedX, normalizedY)
+            )
+        }
+        if (realSenseConnectionState.value.isOperational()) {
             autofocusCoordinator.processTap(normalizedX, normalizedY)
         }
     }

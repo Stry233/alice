@@ -1,5 +1,6 @@
 #include "core/motor/MotorController.h"
 #include <algorithm>
+#include <QDateTime>
 #include <QFileInfo>
 
 namespace alice {
@@ -52,7 +53,11 @@ void MotorController::disconnectDevice() {
         serial_->close();
     }
     serial_.reset();
-    connected_ = false;
+    bool wasConnected = connected_.exchange(false);
+    if (wasConnected) {
+        lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+        connectedSinceMs_ = 0;
+    }
     emit connectionChanged(false);
 }
 
@@ -84,6 +89,7 @@ bool MotorController::openPort(const QSerialPortInfo &portInfo) {
             this, &MotorController::onSerialError);
 
     connected_ = true;
+    connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
     lastScanFailed_ = false;
     lineBuffer_.clear();
     emit connectionChanged(true);

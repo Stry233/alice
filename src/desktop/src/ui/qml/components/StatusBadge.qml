@@ -19,7 +19,12 @@ Item {
         id: bg
         anchors.fill: parent
         radius: Theme.radiusSm
-        color: connected ? Theme.successMuted : Theme.elevated
+        // Depend on both `connected` and `mouseArea.containsMouse` inside a single
+        // binding so that connection-state changes take effect even after the user
+        // has hovered the badge (imperative assignment would break the binding).
+        color: connected
+            ? (mouseArea.containsMouse ? Qt.lighter(Theme.successMuted, 1.15) : Theme.successMuted)
+            : (mouseArea.containsMouse ? Theme.surfaceHover : Theme.elevated)
         border.color: connected ? Theme.success : Theme.border
         border.width: 1
         Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easingEnter } }
@@ -49,11 +54,10 @@ Item {
     }
 
     MouseArea {
+        id: mouseArea
         anchors.fill: parent
         cursorShape: Qt.PointingHandCursor
         hoverEnabled: true
         onClicked: badge.clicked()
-        onEntered: bg.color = connected ? Qt.lighter(Theme.successMuted, 1.15) : Theme.surfaceHover
-        onExited: bg.color = connected ? Theme.successMuted : Theme.elevated
     }
 }

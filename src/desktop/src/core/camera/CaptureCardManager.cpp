@@ -1,6 +1,7 @@
 #include "core/camera/CaptureCardManager.h"
 #include <QCameraDevice>
 #include <QCameraFormat>
+#include <QDateTime>
 #include <cstdio>
 
 namespace alice {
@@ -106,6 +107,7 @@ void CaptureCardManager::startDevice(const QString &deviceName) {
             this, [this](bool active) {
         if (active && !connected_) {
             connected_ = true;
+            connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
             consecutiveFailures_ = 0;
             lastFrameTime_.start();
             frameTimeoutTimer_.start();
@@ -142,6 +144,8 @@ void CaptureCardManager::stop() {
     consecutiveFailures_ = 0;
     if (connected_) {
         connected_ = false;
+        lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+        connectedSinceMs_ = 0;
         emit connectionChanged(false);
     }
 }
@@ -154,6 +158,8 @@ void CaptureCardManager::disconnectDevice() {
     if (sink_) sink_->disconnect(this);
 
     connected_ = false;
+    lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+    connectedSinceMs_ = 0;
     frameTimeoutTimer_.stop();
     emit connectionChanged(false);
 

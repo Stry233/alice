@@ -1,6 +1,6 @@
 #pragma once
 
-#include <vector>
+#include <array>
 #include <cmath>
 #include <cstdint>
 #include <algorithm>
@@ -44,6 +44,8 @@ public:
 
 private:
     void adaptNoiseParameters(float measurement);
+    void pushHistory(float value);
+    float lastHistory() const;
 
     // State
     float x_ = 0.0f;        // Estimated depth (mm)
@@ -54,9 +56,13 @@ private:
     float Q_ = 50.0f;       // Process noise covariance
     float R_ = 100.0f;      // Measurement noise covariance
 
-    // Adaptive parameters
+    // Adaptive parameters — fixed-capacity ring buffer. Avoids the O(N)
+    // vector::erase(begin()) that the previous implementation used on every
+    // update and eliminates heap allocations entirely.
     static constexpr int kHistorySize = 10;
-    std::vector<float> history_;
+    std::array<float, kHistorySize> history_{};
+    int historyCount_ = 0;  // valid entries (0..kHistorySize)
+    int historyHead_ = 0;   // next insertion slot (rolling)
     int64_t lastUpdateTime_ = 0;
 };
 

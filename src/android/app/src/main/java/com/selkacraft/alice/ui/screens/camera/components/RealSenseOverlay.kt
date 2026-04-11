@@ -400,8 +400,10 @@ private fun DraggableDepthPreview(
 
     var currentSize by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
-    // Sync crosshair from remote measurement position when not dragging locally
-    LaunchedEffect(externalMeasureX, externalMeasureY) {
+    // Sync crosshair from remote measurement position when not dragging locally.
+    // Also triggers when currentSize becomes non-zero (layout pass), so the
+    // initial paint honours whatever position the desktop has already reported.
+    LaunchedEffect(externalMeasureX, externalMeasureY, currentSize) {
         if (!isDragging && currentSize.width > 0) {
             normalizedPosition = Offset(externalMeasureX, externalMeasureY)
             dragOffset = Offset(
@@ -465,10 +467,17 @@ private fun DraggableDepthPreview(
                         }
                         currentSize = newSize
                         if (!isInitialized && newSize.width > 0) {
-                            dragOffset = Offset(newSize.width / 2f, newSize.height / 2f)
-                            normalizedPosition = Offset(0.5f, 0.5f)
+                            // First layout: honour the remote crosshair position if
+                            // available, otherwise start at centre. Do NOT echo this
+                            // initial position back via onPositionChanged — doing so
+                            // would rewind the desktop's crosshair every time Android
+                            // opened the overlay.
+                            normalizedPosition = Offset(externalMeasureX, externalMeasureY)
+                            dragOffset = Offset(
+                                externalMeasureX * newSize.width,
+                                externalMeasureY * newSize.height
+                            )
                             isInitialized = true
-                            onPositionChanged(0.5f, 0.5f)
                         }
                     }
                     .pointerInput(isHidden) {
