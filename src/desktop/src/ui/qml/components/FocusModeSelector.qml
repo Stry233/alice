@@ -26,11 +26,17 @@ Row {
             property bool isHovered: focusMa.containsMouse && !isActive
 
             width: focusLabel.implicitWidth + Theme.dp(40); height: Theme.dp(42); radius: Theme.radiusSm
-            color: isActive ? Theme.primary : (isHovered ? Theme.surfaceHover : Theme.surface)
+            color: {
+                if (isActive) return Theme.primary
+                if (focusMa.pressed) return Theme.surfaceActive
+                if (isHovered) return Theme.surfaceHover
+                return Theme.surface
+            }
             border.width: isActive ? 0 : 1
-            border.color: Theme.border
+            border.color: isHovered ? Theme.borderStrong : Theme.border
 
-            Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+            Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+            Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
 
             Text {
                 id: focusLabel
@@ -42,6 +48,7 @@ Row {
                 color: !modeSelector.enabled ? Theme.textDisabled
                      : isActive ? "#ffffff"
                      : Theme.textSecondary
+                Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
             }
 
             MouseArea {

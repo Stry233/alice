@@ -11,7 +11,7 @@ ColumnLayout {
 
     spacing: 0
 
-    Slider {
+    AliceSlider {
         id: slider
         Layout.fillWidth: true
         from: 0
@@ -19,7 +19,6 @@ ColumnLayout {
         stepSize: 1
         value: motorSlider.motorPos
         live: true
-        Material.accent: Theme.primary
 
         onMoved: motorSlider.motorMoved(Math.round(value))
 
@@ -88,9 +87,17 @@ ColumnLayout {
                     width: (btnRow.width - 4 * btnRow.spacing) / 5
                     height: Theme.dp(38); radius: Theme.radiusSm
                     opacity: motorSlider.enabled ? 1.0 : 0.4
-                    color: (motorSlider.enabled && presetMa.containsMouse) ? Theme.surfaceHover : Theme.surface
-                    border.width: 1; border.color: Theme.border
-                    Behavior on opacity { NumberAnimation { duration: Theme.durationFast } }
+                    color: {
+                        if (!motorSlider.enabled) return Theme.surface
+                        if (presetMa.pressed) return Theme.surfaceActive
+                        if (presetMa.containsMouse) return Theme.surfaceHover
+                        return Theme.surface
+                    }
+                    border.width: 1
+                    border.color: (motorSlider.enabled && presetMa.containsMouse) ? Theme.borderStrong : Theme.border
+                    Behavior on opacity { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
 
                     Text {
                         anchors.centerIn: parent

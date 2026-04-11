@@ -59,15 +59,40 @@ Item {
             }
 
             // Main bbox — solid for fresh detections, dashed corners for predicted.
+            //
+            // Position and size animate on a 100ms OutCubic curve to smooth
+            // detector jitter without lagging a moving subject. The state
+            // crossfade (selected ↔ predicted) uses 150ms so the colour and
+            // stroke weight shift is perceptible rather than an abrupt snap.
+            // `strokeColor` / `strokeWidth` are writable intermediary props
+            // so the change cascades into every bracket rectangle via their
+            // parent.* bindings — otherwise each bracket would need its own
+            // Behavior block.
             Rectangle {
+                id: bboxRect
                 x: faceItem.bx; y: faceItem.by
                 width: faceItem.bw; height: faceItem.bh
                 color: "transparent"
-                border.color: faceItem.boxColor
-                border.width: faceItem.isSelected ? 3 : (faceItem.isPredicted ? 1 : 2)
-                opacity: faceItem.isPredicted ? 0.7 : 1.0
                 radius: 2
                 antialiasing: true
+
+                property color strokeColor: faceItem.boxColor
+                property int strokeWidth: faceItem.isSelected ? 3 : (faceItem.isPredicted ? 1 : 2)
+                property int bracketStroke: faceItem.isSelected ? 3 : 2
+                property int bracketLen: Math.max(6, Math.floor(Math.min(width, height) * 0.18))
+
+                border.color: strokeColor
+                border.width: strokeWidth
+                opacity: faceItem.isPredicted ? 0.7 : 1.0
+
+                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on width { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on height { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on strokeColor { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                Behavior on strokeWidth { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                Behavior on bracketStroke { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
 
                 MouseArea {
                     anchors.fill: parent
@@ -79,20 +104,18 @@ Item {
                 // give the box a "reticle" feel similar to pro AF overlays
                 // and stay legible for small faces. Shown for predicted
                 // state to reinforce the "coasting" visual cue.
-                readonly property int bracketLen: Math.max(6, Math.floor(Math.min(width, height) * 0.18))
-                readonly property int bracketW: faceItem.isSelected ? 3 : 2
                 // top-left
-                Rectangle { x: 0; y: 0; width: parent.bracketLen; height: parent.bracketW; color: faceItem.boxColor }
-                Rectangle { x: 0; y: 0; width: parent.bracketW; height: parent.bracketLen; color: faceItem.boxColor }
+                Rectangle { x: 0; y: 0; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
+                Rectangle { x: 0; y: 0; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
                 // top-right
-                Rectangle { x: parent.width - parent.bracketLen; y: 0; width: parent.bracketLen; height: parent.bracketW; color: faceItem.boxColor }
-                Rectangle { x: parent.width - parent.bracketW; y: 0; width: parent.bracketW; height: parent.bracketLen; color: faceItem.boxColor }
+                Rectangle { x: parent.width - parent.bracketLen; y: 0; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
+                Rectangle { x: parent.width - parent.bracketStroke; y: 0; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
                 // bottom-left
-                Rectangle { x: 0; y: parent.height - parent.bracketW; width: parent.bracketLen; height: parent.bracketW; color: faceItem.boxColor }
-                Rectangle { x: 0; y: parent.height - parent.bracketLen; width: parent.bracketW; height: parent.bracketLen; color: faceItem.boxColor }
+                Rectangle { x: 0; y: parent.height - parent.bracketStroke; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
+                Rectangle { x: 0; y: parent.height - parent.bracketLen; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
                 // bottom-right
-                Rectangle { x: parent.width - parent.bracketLen; y: parent.height - parent.bracketW; width: parent.bracketLen; height: parent.bracketW; color: faceItem.boxColor }
-                Rectangle { x: parent.width - parent.bracketW; y: parent.height - parent.bracketLen; width: parent.bracketW; height: parent.bracketLen; color: faceItem.boxColor }
+                Rectangle { x: parent.width - parent.bracketLen; y: parent.height - parent.bracketStroke; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
+                Rectangle { x: parent.width - parent.bracketStroke; y: parent.height - parent.bracketLen; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
             }
 
             // ID / confidence label. Anchored above the bbox when there is
@@ -113,6 +136,9 @@ Item {
                 height: labelH
                 color: faceItem.isSelected ? Theme.primary : Qt.rgba(0, 0, 0, 0.72)
                 radius: 2
+                Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
                 Text {
                     id: idLabel
                     anchors.centerIn: parent
@@ -126,7 +152,9 @@ Item {
                 }
             }
 
-            // Eye markers — small squares at the absolute eye positions.
+            // Eye markers — small squares at the absolute eye positions. A
+            // matching 100ms Behavior keeps eye overlays in step with bbox
+            // motion so they don't appear to drift independently.
             Rectangle {
                 visible: modelData.leftEyeX !== undefined
                 x: root.vidX + (modelData.leftEyeX !== undefined ? modelData.leftEyeX : 0) * root.vidW - 4
@@ -135,6 +163,8 @@ Item {
                 color: "transparent"
                 border.color: "#00ffc8"
                 border.width: 1.5
+                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
             }
             Rectangle {
                 visible: modelData.rightEyeX !== undefined
@@ -144,6 +174,8 @@ Item {
                 color: "transparent"
                 border.color: "#00ffc8"
                 border.width: 1.5
+                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
             }
         }
     }

@@ -184,11 +184,29 @@ void RealSenseManager::captureLoop() {
             impl_->config.enable_stream(RS2_STREAM_COLOR, colorWidth_, colorHeight_, RS2_FORMAT_RGB8, colorFps_);
         } catch (...) {}
 
-        impl_->pipeline.start(impl_->config);
+        auto profile = impl_->pipeline.start(impl_->config);
         impl_->pipelineStarted = true;
         connected_ = true;
         connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
         lastInitFailed_ = false;
+
+        // Read device identity off the active pipeline so the UI popover can
+        // display the actual model. Safe to fail — the getters fall back to
+        // whatever was last cached.
+        try {
+            auto dev = profile.get_device();
+            QString name;
+            if (dev.supports(RS2_CAMERA_INFO_NAME))
+                name = QString::fromUtf8(dev.get_info(RS2_CAMERA_INFO_NAME));
+            QString bus;
+            if (dev.supports(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR))
+                bus = QString("USB %1").arg(QString::fromUtf8(
+                    dev.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR)));
+            QMutexLocker lock(&deviceInfoMutex_);
+            if (!name.isEmpty()) deviceName_ = name;
+            if (!bus.isEmpty()) deviceBus_ = bus;
+        } catch (...) {}
+
         emit connectionChanged(true);
 
     } catch (const rs2::error &e) {

@@ -22,6 +22,14 @@ Rectangle {
     signal disconnectClicked()
     signal restartClicked()
 
+    // Origin-slide presentation. Parent sets `anchorY` to the final resting
+    // position (just below the badge) and toggles `active` to show/hide.
+    // The popover itself animates its y up 6px + fades its opacity to 0
+    // on the way out — the backing `visible` property is derived from
+    // opacity so the fade-out has time to play before the item goes away.
+    property bool active: false
+    property real anchorY: 48
+
     function formatUptime() {
         if (!connected || connectedSinceMs <= 0) return "—"
         var elapsed = Math.max(0, Math.floor((Date.now() - connectedSinceMs) / 1000))
@@ -51,18 +59,21 @@ Rectangle {
     onConnectedSinceMsChanged: refreshTimes()
     onLastSeenMsChanged: refreshTimes()
     onConnectedChanged: refreshTimes()
-    onVisibleChanged: if (visible) refreshTimes()
+    onActiveChanged: if (active) refreshTimes()
 
     Timer {
         interval: 1000
         repeat: true
-        running: popover.visible
+        running: popover.active
         triggeredOnStart: true
         onTriggered: popover.refreshTimes()
     }
 
-    visible: false
-    opacity: visible ? 1.0 : 0.0
+    // Backing `visible` is derived from opacity so the fade-out has time to
+    // play before the item vanishes. Toggling `active` is what parents do.
+    visible: opacity > 0.01
+    opacity: active ? 1.0 : 0.0
+    y: anchorY - (active ? 0 : Theme.popoverSlideOffset)
     // Adaptive width
     width: Math.max(Theme.popoverWidth, col.implicitWidth + Theme.dp(48))
     implicitHeight: col.implicitHeight + Theme.dp(40)
@@ -73,6 +84,7 @@ Rectangle {
     z: 100
 
     Behavior on opacity { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+    Behavior on y { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
 
     ColumnLayout {
         id: col
@@ -146,26 +158,41 @@ Rectangle {
             visible: connected
             Rectangle {
                 Layout.fillWidth: true; height: Theme.dp(30); radius: Theme.radiusSm
-                color: Theme.elevated; border.width: 1; border.color: Theme.border
+                color: restartMa.pressed ? Theme.surfaceActive
+                     : (restartMa.containsMouse ? Theme.surfaceHover : Theme.elevated)
+                border.width: 1
+                border.color: restartMa.containsMouse ? Theme.borderStrong : Theme.border
+                Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
                 Text { anchors.centerIn: parent; text: "Restart"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textPrimary }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: popover.restartClicked() }
+                MouseArea { id: restartMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: popover.restartClicked() }
             }
             Rectangle {
                 Layout.fillWidth: true; height: Theme.dp(30); radius: Theme.radiusSm
-                color: Theme.dangerMuted; border.width: 1; border.color: Qt.rgba(0.86, 0.22, 0.22, 0.4)
+                color: disconnectMa.pressed ? Qt.darker(Theme.dangerMuted, 1.15)
+                     : (disconnectMa.containsMouse ? Qt.lighter(Theme.dangerMuted, 1.15) : Theme.dangerMuted)
+                border.width: 1
+                border.color: disconnectMa.containsMouse ? Theme.danger : Qt.rgba(0.86, 0.22, 0.22, 0.4)
+                Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
                 Text { anchors.centerIn: parent; text: "Disconnect"; font.pixelSize: Theme.fontSizeMicro; color: Theme.dangerText }
-                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: popover.disconnectClicked() }
+                MouseArea { id: disconnectMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: popover.disconnectClicked() }
             }
         }
 
         // Button (disconnected)
         Rectangle {
             Layout.fillWidth: true; height: Theme.dp(30); radius: Theme.radiusSm; visible: !connected
-            color: Theme.primaryMuted; border.width: 1; border.color: Qt.rgba(0.17, 0.58, 0.84, 0.4)
+            color: reconnectMa.pressed ? Qt.darker(Theme.primaryMuted, 1.15)
+                 : (reconnectMa.containsMouse ? Qt.lighter(Theme.primaryMuted, 1.15) : Theme.primaryMuted)
+            border.width: 1
+            border.color: reconnectMa.containsMouse ? Theme.primary : Qt.rgba(0.17, 0.58, 0.84, 0.4)
+            Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+            Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
             Text { anchors.centerIn: parent; text: "Reconnect"; font.pixelSize: Theme.fontSizeMicro; color: Theme.primaryHover }
-            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: popover.reconnectClicked() }
+            MouseArea { id: reconnectMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor; onClicked: popover.reconnectClicked() }
         }
     }
 
-    function toggle() { visible = !visible }
+    function toggle() { active = !active }
 }

@@ -201,6 +201,9 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/CalibrationTable.qml
         src/ui/qml/components/CalibrationGraph.qml
         src/ui/qml/components/MappingPlot.qml
+        src/ui/qml/components/AliceSlider.qml
+        src/ui/qml/components/AliceTextField.qml
+        src/ui/qml/components/AliceSpinBox.qml
     RESOURCES
         assets/fonts/Inter-Regular.ttf
         assets/fonts/Inter-Medium.ttf

@@ -289,6 +289,33 @@ qint64 AppController::realSenseLastDisconnectMs() const { return realsense_->las
 qint64 AppController::captureCardConnectedSinceMs() const { return captureCard_->connectedSinceMs(); }
 qint64 AppController::captureCardLastDisconnectMs() const { return captureCard_->lastDisconnectMs(); }
 
+// Device identity getters — populated from the actual hardware managers.
+// Each falls back to a sensible generic label when the manager hasn't yet
+// seen a device so the popover never shows an empty string.
+QString AppController::motorDeviceName() const {
+    QString name = motor_ ? motor_->deviceDescription() : QString();
+    return name.isEmpty() ? QStringLiteral("Motor Dongle") : name;
+}
+QString AppController::motorDeviceAddress() const {
+    QString port = motor_ ? motor_->devicePortName() : QString();
+    return port.isEmpty() ? QStringLiteral("—") : port;
+}
+QString AppController::realSenseDeviceName() const {
+    QString name = realsense_ ? realsense_->deviceName() : QString();
+    return name.isEmpty() ? QStringLiteral("Depth Camera") : name;
+}
+QString AppController::realSenseDeviceAddress() const {
+    QString bus = realsense_ ? realsense_->deviceBus() : QString();
+    return bus.isEmpty() ? QStringLiteral("USB") : bus;
+}
+QString AppController::captureCardDeviceName() const {
+    QString name = captureCard_ ? captureCard_->deviceDescription() : QString();
+    return name.isEmpty() ? QStringLiteral("Capture Card") : name;
+}
+QString AppController::captureCardDeviceAddress() const {
+    return QStringLiteral("UVC");
+}
+
 // ── User-initiated device control ────────────────────────────────────
 
 void AppController::restartMotor() {

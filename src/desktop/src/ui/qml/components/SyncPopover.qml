@@ -5,8 +5,14 @@ import Alice.Renderers 1.0
 
 Rectangle {
     id: popover
-    visible: false
-    opacity: visible ? 1.0 : 0.0
+
+    // Origin-slide presentation (see BadgePopover.qml for details).
+    property bool active: false
+    property real anchorY: 48
+
+    visible: opacity > 0.01
+    opacity: active ? 1.0 : 0.0
+    y: anchorY - (active ? 0 : Theme.popoverSlideOffset)
     width: Theme.syncPopoverWidth
     implicitHeight: col.implicitHeight + 40
     color: Theme.surface
@@ -16,6 +22,7 @@ Rectangle {
     z: 100
 
     Behavior on opacity { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+    Behavior on y { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
 
     property bool connected: alice ? alice.syncClientConnected : false
     property string serverAddress: {
@@ -31,8 +38,8 @@ Rectangle {
         return payload.toString()
     }
 
-    onVisibleChanged: {
-        if (visible && alice && !alice.syncServerRunning)
+    onActiveChanged: {
+        if (active && alice && !alice.syncServerRunning)
             alice.startSyncServer()
     }
 
@@ -82,7 +89,7 @@ Rectangle {
                 anchors.centerIn: parent; width: 150; height: 150; color: "#ffffff"; radius: Theme.radiusSm
                 VideoRenderer {
                     anchors.centerIn: parent; width: 140; height: 140
-                    source: alice ? alice.qrCodeImage : null
+                    source: alice.qrCodeImage
                 }
             }
         }
@@ -118,5 +125,5 @@ Rectangle {
         }
     }
 
-    function toggle() { visible = !visible }
+    function toggle() { active = !active }
 }

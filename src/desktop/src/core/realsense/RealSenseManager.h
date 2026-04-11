@@ -38,6 +38,10 @@ public:
     float currentConfidence() const { return confidence_; }
     qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
     qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
+    /** Human-readable model name from RS2_CAMERA_INFO_NAME (e.g. "Intel RealSense D455"). */
+    QString deviceName() const { QMutexLocker l(&deviceInfoMutex_); return deviceName_; }
+    /** Bus identifier (typically "USB 3.x") for the attached camera. */
+    QString deviceBus() const { QMutexLocker l(&deviceInfoMutex_); return deviceBus_; }
 
     void setMeasurementPosition(float x, float y);
     void getMeasurementPosition(float &x, float &y) const;
@@ -124,6 +128,12 @@ private:
     std::vector<uint16_t> depthCache_;
     int depthCacheW_ = 0;
     int depthCacheH_ = 0;
+
+    // Device identity read from RS2_CAMERA_INFO_NAME when the pipeline starts.
+    // Protected by its own mutex so UI threads can read it safely.
+    mutable QMutex deviceInfoMutex_;
+    QString deviceName_;
+    QString deviceBus_;
 
     // Frame timeout watchdog (main thread timer)
     QTimer frameTimeoutTimer_;

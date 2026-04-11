@@ -36,6 +36,16 @@ class AppController : public QObject {
     Q_PROPERTY(bool captureCardConnected READ captureCardConnected NOTIFY deviceStateChanged)
     Q_PROPERTY(int motorPosition READ motorPosition NOTIFY motorPositionChanged)
 
+    // Device identity — populated from the hardware managers on connect so
+    // the popover UI can show actual model / bus names instead of hardcoded
+    // placeholders. Re-notified on every device state transition.
+    Q_PROPERTY(QString motorDeviceName READ motorDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString motorDeviceAddress READ motorDeviceAddress NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString realSenseDeviceName READ realSenseDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString realSenseDeviceAddress READ realSenseDeviceAddress NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString captureCardDeviceName READ captureCardDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString captureCardDeviceAddress READ captureCardDeviceAddress NOTIFY deviceStateChanged)
+
     // Connection lifecycle timestamps (epoch ms; 0 = never)
     Q_PROPERTY(qint64 motorConnectedSinceMs READ motorConnectedSinceMs NOTIFY deviceStateChanged)
     Q_PROPERTY(qint64 motorLastDisconnectMs READ motorLastDisconnectMs NOTIFY deviceStateChanged)
@@ -87,6 +97,10 @@ class AppController : public QObject {
     Q_PROPERTY(QImage colorFrame READ colorFrame NOTIFY colorFrameChanged)
     Q_PROPERTY(QImage depthFrame READ depthFrame NOTIFY depthFrameChanged)
     Q_PROPERTY(QImage captureFrame READ captureFrame NOTIFY captureFrameChanged)
+    // Constant empty QImage so QML bindings that want to "clear" a renderer
+    // can fall back to a valid value instead of `null` (which produces the
+    // "Unable to assign null to QImage" warning).
+    Q_PROPERTY(QImage emptyFrame READ emptyFrame CONSTANT)
 
 public:
     explicit AppController(QObject *parent = nullptr);
@@ -107,6 +121,13 @@ public:
     qint64 realSenseLastDisconnectMs() const;
     qint64 captureCardConnectedSinceMs() const;
     qint64 captureCardLastDisconnectMs() const;
+
+    QString motorDeviceName() const;
+    QString motorDeviceAddress() const;
+    QString realSenseDeviceName() const;
+    QString realSenseDeviceAddress() const;
+    QString captureCardDeviceName() const;
+    QString captureCardDeviceAddress() const;
 
     // ── User-initiated device control ────────────────────────────────
     Q_INVOKABLE void restartMotor();
@@ -191,6 +212,7 @@ public:
     QImage colorFrame() const { return colorFrame_; }
     QImage depthFrame() const { return depthFrame_; }
     QImage captureFrame() const { return captureFrame_; }
+    QImage emptyFrame() const { return QImage(); }
 
     // ── UI state ─────────────────────────────────────────────────────
     bool showDepthOverlay() const { return showDepthOverlay_; }

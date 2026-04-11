@@ -37,6 +37,10 @@ public:
     int destinationAddress() const { return destAddress_; }
     qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
     qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
+    /** Human-readable name of the detected serial device, if any. */
+    QString deviceDescription() const { return deviceDescription_; }
+    /** Short bus identifier (e.g. "/dev/ttyACM0") of the active port, if any. */
+    QString devicePortName() const { return devicePortName_; }
 
 public slots:
     /** Discover and connect to the motor dongle. */
@@ -96,6 +100,11 @@ private:
     std::atomic<bool> connected_{false};
     std::atomic<int> position_{0};
     int destAddress_ = 0xFFFF;
+
+    // Populated when openPort succeeds; cleared on disconnect. Used by the
+    // UI to show the actual detected device name in the Motor popover.
+    QString deviceDescription_;
+    QString devicePortName_;
 
     // Connection lifecycle timestamps (epoch ms; 0 = never)
     std::atomic<qint64> connectedSinceMs_{0};

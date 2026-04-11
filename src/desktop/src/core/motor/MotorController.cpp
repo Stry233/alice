@@ -58,6 +58,8 @@ void MotorController::disconnectDevice() {
         lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
         connectedSinceMs_ = 0;
     }
+    // Deliberately keep deviceDescription_ populated so the popover can
+    // still show "last seen as …" until a new device is plugged in.
     emit connectionChanged(false);
 }
 
@@ -92,6 +94,14 @@ bool MotorController::openPort(const QSerialPortInfo &portInfo) {
     connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
     lastScanFailed_ = false;
     lineBuffer_.clear();
+
+    // Capture the actual device description so the UI popover can show a
+    // real name instead of a hardcoded "nRF52840" fallback.
+    deviceDescription_ = portInfo.description();
+    if (deviceDescription_.isEmpty())
+        deviceDescription_ = portInfo.portName();
+    devicePortName_ = portInfo.systemLocation();
+
     emit connectionChanged(true);
     return true;
 }

@@ -10,6 +10,10 @@ Item {
     property string deviceInfo: ""
     property string uptime: ""
     property bool isSync: false
+    // Set by the parent when this badge's popover is currently open — drives
+    // the "pressed" micro-state (5% darker fill, brighter border) so the user
+    // can tell which trigger the popover belongs to. See DRD §A.
+    property bool popoverOpen: false
     signal clicked()
 
     width: row.implicitWidth + Theme.dp(32)
@@ -19,13 +23,27 @@ Item {
         id: bg
         anchors.fill: parent
         radius: Theme.radiusSm
-        // Depend on both `connected` and `mouseArea.containsMouse` inside a single
-        // binding so that connection-state changes take effect even after the user
-        // has hovered the badge (imperative assignment would break the binding).
-        color: connected
-            ? (mouseArea.containsMouse ? Qt.lighter(Theme.successMuted, 1.15) : Theme.successMuted)
-            : (mouseArea.containsMouse ? Theme.surfaceHover : Theme.elevated)
-        border.color: connected ? Theme.success : Theme.border
+        // Depend on `connected`, `mouseArea.containsMouse`, and `popoverOpen`
+        // inside a single binding so all three state inputs reach the color
+        // through a reactive channel (imperative assignment would break it).
+        //
+        //   Default                 →  surface tone for this state
+        //   Hover (no popover open) →  +15% lighter fill
+        //   Popover open            →  ~8% darker fill, same tone family —
+        //                              communicates "I am the trigger"
+        color: {
+            if (connected) {
+                if (popoverOpen) return Qt.darker(Theme.successMuted, 1.08)
+                if (mouseArea.containsMouse) return Qt.lighter(Theme.successMuted, 1.15)
+                return Theme.successMuted
+            }
+            if (popoverOpen) return Qt.darker(Theme.elevated, 1.08)
+            if (mouseArea.containsMouse) return Theme.surfaceHover
+            return Theme.elevated
+        }
+        border.color: connected
+            ? (popoverOpen ? Theme.primary : Theme.success)
+            : (popoverOpen ? Theme.primary : Theme.border)
         border.width: 1
         Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easingEnter } }
         Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Theme.easingEnter } }

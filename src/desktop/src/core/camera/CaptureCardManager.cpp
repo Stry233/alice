@@ -86,6 +86,8 @@ void CaptureCardManager::startDevice(const QString &deviceName) {
         return;
     }
 
+    deviceDescription_ = target.description();
+
     camera_ = std::make_unique<QCamera>(target);
     session_ = std::make_unique<QMediaCaptureSession>();
     sink_ = std::make_unique<QVideoSink>();
