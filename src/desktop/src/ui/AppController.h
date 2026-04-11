@@ -306,10 +306,12 @@ private:
     bool streamDepth_ = false;
     bool streamCapture_ = false;
 
-    // Configurable JPEG quality (0-100)
-    int streamQualityDepth_ = 85;
-    int streamQualityColor_ = 85;
-    int streamQualityCapture_ = 80;
+    // Configurable JPEG quality (0-100). See SettingsManager::txQuality*()
+    // for the rationale: capture card is high priority for monitoring and
+    // defaults to 92; depth / RS color are small overlays and default to 70.
+    int streamQualityDepth_ = 70;
+    int streamQualityColor_ = 70;
+    int streamQualityCapture_ = 92;
 
     // Frame type constants
     static constexpr uint8_t kFrameTypeColor = 0x01;
@@ -327,8 +329,10 @@ private:
     std::atomic<bool> captureEncodeBusy_{false};
     std::atomic<bool> depthEncodeBusy_{false};
 
-    void sendFrameToClient(uint8_t frameType, const QImage &frame, int quality);
-    void sendFrameToClientAsync(uint8_t frameType, const QImage &frame, int quality,
+    void sendFrameToClient(uint8_t frameType, const QImage &frame,
+                           int quality, int maxW, int maxH);
+    void sendFrameToClientAsync(uint8_t frameType, const QImage &frame,
+                                int quality, int maxW, int maxH,
                                 std::atomic<bool> &busyFlag);
 };
 

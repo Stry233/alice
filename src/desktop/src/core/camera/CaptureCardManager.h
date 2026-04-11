@@ -80,6 +80,10 @@ private:
     QElapsedTimer lastFrameTime_;
     int consecutiveFailures_ = 0;
     static constexpr int kFrameTimeoutMs = 3000;
+
+    // One-shot diagnostic so we log the capture card's source colour space
+    // exactly once per connection, not 30 times a second.
+    bool loggedFrameInfo_ = false;
 };
 
 } // namespace alice

@@ -134,10 +134,16 @@ void SettingsManager::setCaptureResolution(int w, int h, int fps) {
 }
 
 // ── Transmission quality ─────────────────────────────────────────────
-
-int SettingsManager::txQualityDepth() const { return settings_.value(keys::kTxQualityDepth, 85).toInt(); }
+//
+// Capture card is the main monitoring feed on the Android client so it
+// keeps a high-quality default (92 ≈ visually near-lossless on natural
+// content). Depth colormap and RealSense RGB are small overlays and get an
+// aggressive 70 default — at 640×480 the artefacts are imperceptible but
+// the bandwidth savings are substantial, leaving headroom for the capture
+// stream.
+int SettingsManager::txQualityDepth() const { return settings_.value(keys::kTxQualityDepth, 70).toInt(); }
 void SettingsManager::setTxQualityDepth(int v) { settings_.setValue(keys::kTxQualityDepth, v); }
-int SettingsManager::txQualityCapture() const { return settings_.value(keys::kTxQualityCapture, 80).toInt(); }
+int SettingsManager::txQualityCapture() const { return settings_.value(keys::kTxQualityCapture, 92).toInt(); }
 void SettingsManager::setTxQualityCapture(int v) { settings_.setValue(keys::kTxQualityCapture, v); }
 int SettingsManager::txMaxFps() const { return settings_.value(keys::kTxMaxFps, 30).toInt(); }
 void SettingsManager::setTxMaxFps(int v) { settings_.setValue(keys::kTxMaxFps, v); }

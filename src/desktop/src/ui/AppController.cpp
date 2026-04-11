@@ -12,10 +12,12 @@
 #include "network/QrGenerator.h"
 
 #include <QBuffer>
+#include <QColorSpace>
 #include <QCoreApplication>
 #include <QDateTime>
 #include <QDir>
 #include <QFileInfo>
+#include <QImageWriter>
 #include <QtConcurrent/QtConcurrent>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -26,6 +28,64 @@
 #include <limits>
 
 namespace alice {
+
+namespace {
+
+// Encoding targets per stream type.
+//
+// The capture card is the "main view" the remote Android client uses to
+// monitor the cinema camera, so it keeps native 1080p resolution, a
+// SmoothTransformation downscale when the source is bigger (e.g. 4K
+// capture), and a high JPEG quality default (the slider lets the user push
+// further to visually-lossless 100 if bandwidth allows).
+//
+// The RealSense depth colormap and RGB color are rendered as small client
+// overlays in Alice Android, so we clamp them to 640×480 and drop the
+// quality default. At that size the compression artefacts are invisible to
+// the user but the bandwidth savings are substantial (~8× smaller than
+// full resolution) which keeps the overlay streams from stealing budget
+// from the capture card.
+constexpr int kCaptureMaxW = 1920;
+constexpr int kCaptureMaxH = 1080;
+constexpr int kOverlayMaxW = 640;
+constexpr int kOverlayMaxH = 480;
+
+QByteArray encodeFrameToJpeg(const QImage &frame, int maxW, int maxH, int quality) {
+    QImage scaled = frame;
+    if (frame.width() > maxW || frame.height() > maxH) {
+        scaled = frame.scaled(maxW, maxH, Qt::KeepAspectRatio, Qt::SmoothTransformation);
+    }
+    // Force RGB888 so the JPEG encoder writes a straight RGB→YCbCr path.
+    // Any other format (ARGB32, BGR, indexed…) causes libjpeg to do an
+    // internal conversion that can introduce subtle colour shifts on the
+    // receiving side — exactly the symptom the Android client was showing.
+    if (scaled.format() != QImage::Format_RGB888) {
+        scaled = scaled.convertToFormat(QImage::Format_RGB888);
+    }
+    // Force-tag as sRGB. HDMI capture cards typically provide frames with
+    // a BT.709 colour space tag, which Qt preserves through toImage() and
+    // convertToFormat(). libjpeg then embeds a BT.709 ICC profile in the
+    // JPEG. On the PC side QPainter ignores ICC profiles and draws the
+    // pixels as-is (which is what the user sees as "correct"), but on
+    // Android the Compose render path honours the embedded profile and
+    // colour-manages BT.709 → display, producing a slightly warmer/redder
+    // image relative to the PC. By overwriting the tag with sRGB (without
+    // touching pixel values) we make both sides interpret the bytes the
+    // same way, and the visual match on both screens.
+    scaled.setColorSpace(QColorSpace(QColorSpace::SRgb));
+
+    QByteArray jpegData;
+    QBuffer buffer(&jpegData);
+    buffer.open(QIODevice::WriteOnly);
+    QImageWriter writer(&buffer, "JPEG");
+    writer.setQuality(quality);
+    writer.setOptimizedWrite(true);  // tighter Huffman tables, no quality loss
+    writer.write(scaled);
+    buffer.close();
+    return jpegData;
+}
+
+}  // namespace
 
 AppController::AppController(QObject *parent)
     : QObject(parent)
@@ -757,13 +817,16 @@ void AppController::onColorFrame(const QImage &frame) {
 
     emit colorFrameChanged();
 
-    // Stream to remote client (throttled)
+    // Stream to remote client (throttled). RealSense color is an overlay on
+    // the Android client, so clamp to kOverlayMaxW×kOverlayMaxH and use the
+    // lower overlay quality.
     static int colorStreamCount = 0;
     if (streamColor_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastColorSendMs_ >= minFrameIntervalMs_) {
             lastColorSendMs_ = now;
-            sendFrameToClient(kFrameTypeColor, frame, streamQualityColor_);
+            sendFrameToClient(kFrameTypeColor, frame, streamQualityColor_,
+                              kOverlayMaxW, kOverlayMaxH);
             if (++colorStreamCount % 60 == 0) {
                 fprintf(stderr, "[STREAM] Sent %d color frames (%dx%d)\n",
                         colorStreamCount, frame.width(), frame.height());
@@ -776,12 +839,14 @@ void AppController::onDepthFrame(const QImage &frame) {
     depthFrame_ = frame;
     emit depthFrameChanged();
 
+    // Depth colormap is an overlay — aggressive downscale + low quality.
     static int depthStreamCount = 0;
     if (streamDepth_ && !depthEncodeBusy_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastDepthSendMs_ >= minFrameIntervalMs_) {
             lastDepthSendMs_ = now;
-            sendFrameToClientAsync(kFrameTypeDepth, frame, streamQualityDepth_, depthEncodeBusy_);
+            sendFrameToClientAsync(kFrameTypeDepth, frame, streamQualityDepth_,
+                                   kOverlayMaxW, kOverlayMaxH, depthEncodeBusy_);
             if (++depthStreamCount % 60 == 0) {
                 fprintf(stderr, "[STREAM] Sent %d depth frames (%dx%d)\n",
                         depthStreamCount, frame.width(), frame.height());
@@ -794,47 +859,19 @@ void AppController::onCaptureFrame(const QImage &frame) {
     captureFrame_ = frame;
     emit captureFrameChanged();
 
+    // Capture card is the main-view monitoring feed. Keep it at native 1080p
+    // (downscaled only for 4K+ sources) with the high-quality JPEG encoder.
     static int captureStreamCount = 0;
     if (streamCapture_ && !captureEncodeBusy_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastCaptureSendMs_ >= minFrameIntervalMs_) {
             lastCaptureSendMs_ = now;
-            captureEncodeBusy_ = true;
-
-            // Encode JPEG off the main thread to avoid blocking the event loop
-            QImage copy = frame.copy();
-            int quality = streamQualityCapture_;
-            QtConcurrent::run([this, copy, quality]() {
-                QImage scaled = copy;
-                if (copy.width() > 960) {
-                    scaled = copy.scaled(960, 540, Qt::KeepAspectRatio, Qt::FastTransformation);
-                }
-
-                QByteArray jpegData;
-                QBuffer buffer(&jpegData);
-                buffer.open(QIODevice::WriteOnly);
-                scaled.save(&buffer, "JPEG", quality);
-                buffer.close();
-
-                if (!jpegData.isEmpty() && syncServer_->hasClient()) {
-                    QByteArray msg;
-                    msg.reserve(5 + jpegData.size());
-                    msg.append(static_cast<char>(kFrameTypeCapture));
-                    uint32_t ts = static_cast<uint32_t>(QDateTime::currentMSecsSinceEpoch() & 0xFFFFFFFF);
-                    msg.append(reinterpret_cast<const char*>(&ts), 4);
-                    msg.append(jpegData);
-
-                    QMetaObject::invokeMethod(syncServer_.get(), [this, msg]() {
-                        syncServer_->sendBinaryMessage(msg);
-                    }, Qt::QueuedConnection);
-
-                    if (++captureStreamCount % 30 == 0) {
-                        fprintf(stderr, "[STREAM] Sent %d capture frames (jpeg=%d bytes)\n",
-                                captureStreamCount, (int)jpegData.size());
-                    }
-                }
-                captureEncodeBusy_ = false;
-            });
+            sendFrameToClientAsync(kFrameTypeCapture, frame, streamQualityCapture_,
+                                   kCaptureMaxW, kCaptureMaxH, captureEncodeBusy_);
+            if (++captureStreamCount % 30 == 0) {
+                fprintf(stderr, "[STREAM] Sent %d capture frames (%dx%d)\n",
+                        captureStreamCount, frame.width(), frame.height());
+            }
         }
     }
 }
@@ -989,23 +1026,15 @@ void AppController::broadcastCurrentMapping() {
         .arg(QString::fromStdString(mapping->name())));
 }
 
-void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame, int quality) {
+void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame,
+                                      int quality, int maxW, int maxH) {
     if (!syncServer_->hasClient()) return;
 
-    // Small frames (color overlay) — synchronous encoding is fast enough at
-    // -O3. Capture card frames and depth colormap use the async path below
-    // to keep the main event loop responsive.
-    QImage scaled = frame;
-    if (frame.width() > 960) {
-        scaled = frame.scaled(960, 540, Qt::KeepAspectRatio, Qt::FastTransformation);
-    }
-
-    QByteArray jpegData;
-    QBuffer buffer(&jpegData);
-    buffer.open(QIODevice::WriteOnly);
-    scaled.save(&buffer, "JPEG", quality);
-    buffer.close();
-
+    // Synchronous encode path — only used for the small RealSense color
+    // overlay, where the encode cost at 640×480 is a couple of milliseconds
+    // on the main thread. Capture card and depth colormap use the async
+    // path below.
+    QByteArray jpegData = encodeFrameToJpeg(frame, maxW, maxH, quality);
     if (jpegData.isEmpty()) return;
 
     QByteArray msg;
@@ -1019,22 +1048,14 @@ void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame, in
 }
 
 void AppController::sendFrameToClientAsync(uint8_t frameType, const QImage &frame,
-                                           int quality, std::atomic<bool> &busyFlag) {
+                                           int quality, int maxW, int maxH,
+                                           std::atomic<bool> &busyFlag) {
     if (!syncServer_->hasClient()) return;
 
     busyFlag = true;
     QImage copy = frame.copy();
-    (void)QtConcurrent::run([this, copy, quality, frameType, &busyFlag]() mutable {
-        QImage scaled = copy;
-        if (copy.width() > 960) {
-            scaled = copy.scaled(960, 540, Qt::KeepAspectRatio, Qt::FastTransformation);
-        }
-
-        QByteArray jpegData;
-        QBuffer buffer(&jpegData);
-        buffer.open(QIODevice::WriteOnly);
-        scaled.save(&buffer, "JPEG", quality);
-        buffer.close();
+    (void)QtConcurrent::run([this, copy, quality, frameType, maxW, maxH, &busyFlag]() mutable {
+        QByteArray jpegData = encodeFrameToJpeg(copy, maxW, maxH, quality);
 
         if (!jpegData.isEmpty() && syncServer_->hasClient()) {
             QByteArray msg;

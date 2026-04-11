@@ -122,14 +122,14 @@ Item {
 
                 ColumnLayout {
                     spacing: Theme.dp(6); Layout.fillWidth: true
-                    RowLayout { Text { text: "Depth/Color"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: alice ? alice.txQualityDepth.toString() : "85"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
-                    AliceSlider { Layout.fillWidth: true; from: 10; to: 100; stepSize: 5; value: alice ? alice.txQualityDepth : 85; onMoved: { if (alice) alice.txQualityDepth = value } }
+                    RowLayout { Text { text: "Depth overlay"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: alice ? alice.txQualityDepth.toString() : "70"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
+                    AliceSlider { Layout.fillWidth: true; from: 10; to: 100; stepSize: 5; value: alice ? alice.txQualityDepth : 70; onMoved: { if (alice) alice.txQualityDepth = value } }
                 }
 
                 ColumnLayout {
                     spacing: Theme.dp(6); Layout.fillWidth: true
-                    RowLayout { Text { text: "Camera"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: alice ? alice.txQualityCapture.toString() : "80"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
-                    AliceSlider { Layout.fillWidth: true; from: 10; to: 100; stepSize: 5; value: alice ? alice.txQualityCapture : 80; onMoved: { if (alice) alice.txQualityCapture = value } }
+                    RowLayout { Text { text: "Camera (main view)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: alice ? alice.txQualityCapture.toString() : "92"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
+                    AliceSlider { Layout.fillWidth: true; from: 10; to: 100; stepSize: 5; value: alice ? alice.txQualityCapture : 92; onMoved: { if (alice) alice.txQualityCapture = value } }
                 }
 
                 ColumnLayout {

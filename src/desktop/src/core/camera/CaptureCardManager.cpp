@@ -1,6 +1,7 @@
 #include "core/camera/CaptureCardManager.h"
 #include <QCameraDevice>
 #include <QCameraFormat>
+#include <QColorSpace>
 #include <QDateTime>
 #include <cstdio>
 
@@ -87,6 +88,7 @@ void CaptureCardManager::startDevice(const QString &deviceName) {
     }
 
     deviceDescription_ = target.description();
+    loggedFrameInfo_ = false;
 
     camera_ = std::make_unique<QCamera>(target);
     session_ = std::make_unique<QMediaCaptureSession>();
@@ -190,14 +192,60 @@ void CaptureCardManager::onFrameChanged() {
         }
         return;
     }
-    QImage img = frame.toImage();
+    // QVideoFrame::toImage() returns a QImage that shares the underlying
+    // mapped video buffer, so we MUST deep-copy before unmap() or we'll
+    // hit a use-after-free on the next pixel access. convertToFormat to
+    // RGB888 allocates a fresh buffer (different bit depth forces a copy),
+    // giving us an independently-owned QImage that's safe to mutate later.
+    // We also grab the source colour space off the shared QImage while it
+    // is still valid — QColorSpace is just metadata, no pixel access.
+    QImage shared = frame.toImage();
+    QImage img = shared.convertToFormat(QImage::Format_RGB888);
+    QColorSpace sourceCs = shared.colorSpace();
     frame.unmap();
 
-    if (!img.isNull() && img.width() > 0) {
-        consecutiveFailures_ = 0;
-        lastFrameTime_.restart();
-        emit frameReady(img.convertToFormat(QImage::Format_RGB888));
+    if (img.isNull() || img.width() <= 0) return;
+
+    consecutiveFailures_ = 0;
+    lastFrameTime_.restart();
+
+    // HDMI capture cards frequently hand Qt frames tagged with BT.709 (the
+    // HD video color space). Qt's painter doesn't do colour-management so
+    // it blits the BT.709 pixels directly — which is what the user sees as
+    // "correct" on the PC. Android's Compose path DOES colour-manage, so
+    // if we ship the BT.709 pixels unchanged, the phone converts them to
+    // its display space and shifts reds warmer. By mapping the pixels into
+    // sRGB here (actual pixel remap, not just a tag change), both the PC
+    // preview and the Android client end up looking at the same sRGB
+    // bytes and the visual shift disappears.
+    //
+    // convertToFormat does NOT carry the source colour space forward
+    // (RGB888 has no implicit tag), so we stamp the captured tag back onto
+    // the RGB888 copy before running the conversion.
+    QColorSpace srgb(QColorSpace::SRgb);
+    if (sourceCs.isValid()) {
+        img.setColorSpace(sourceCs);
     }
+
+    if (img.colorSpace().isValid() && img.colorSpace() != srgb) {
+        if (!loggedFrameInfo_) {
+            fprintf(stderr, "[CaptureCard] Source colorSpace: %s -> remapping to sRGB\n",
+                    img.colorSpace().description().toUtf8().constData());
+            loggedFrameInfo_ = true;
+        }
+        img.convertToColorSpace(srgb);
+    } else if (!loggedFrameInfo_) {
+        fprintf(stderr, "[CaptureCard] Source colorSpace: %s (no remap needed)\n",
+                img.colorSpace().isValid()
+                    ? img.colorSpace().description().toUtf8().constData()
+                    : "(untagged)");
+        loggedFrameInfo_ = true;
+    }
+
+    if (!img.colorSpace().isValid()) {
+        img.setColorSpace(srgb);
+    }
+    emit frameReady(img);
 }
 
 void CaptureCardManager::checkFrameTimeout() {
