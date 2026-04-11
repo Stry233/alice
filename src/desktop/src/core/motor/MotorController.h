@@ -122,6 +122,10 @@ private:
 
     // Suppress repeated "not found" errors — only emit on first failure
     bool lastScanFailed_ = false;
+
+    // Defensive bounds on lineBuffer_ so a broken dongle can't OOM the app.
+    static constexpr int kMaxLineBufferBytes   = 8 * 1024;
+    static constexpr int kLineBufferTrimTail   = 1 * 1024;
 };
 
 } // namespace alice

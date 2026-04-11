@@ -162,6 +162,16 @@ public:
     Q_INVOKABLE void loadMappingFromFile(const QString &path);
     Q_INVOKABLE void loadPreset(int presetIndex);
     Q_INVOKABLE void clearMapping();
+    /**
+     * Serialise the user-recorded calibration points to a JSON mapping
+     * file that loadMappingFromFile() can later consume. Accepts either a
+     * local path or a file:// URL (as produced by QML FileDialog).
+     * Returns false and logs if the path is empty, the points list is
+     * invalid, or the filesystem write fails.
+     */
+    Q_INVOKABLE bool saveMappingToFile(const QString &pathOrUrl,
+                                       const QVariantList &points,
+                                       const QString &name = QStringLiteral("Calibration"));
 
     // ── Motor control ────────────────────────────────────────────────
     Q_INVOKABLE void setMotorPosition(int position);
@@ -290,10 +300,24 @@ private:
     int faceFrameWidth_ = 0;
     int faceFrameHeight_ = 0;
     qint64 lastFaceBroadcastMs_ = 0;
-    // Auto-selected primary face id for hysteresis — an incoming detection
-    // only steals primary from the current one if its score beats this
-    // value times the hysteresis multiplier (or gets closer in depth by
-    // the depth hysteresis multiplier).
+    // Auto-selected primary face id for hysteresis handoff. An incoming
+    // detection only steals the "primary" slot from the currently-tracked
+    // face if it decisively wins on one of two criteria:
+    //
+    //   kPrimaryHysteresis: score-based fallback path. The challenger's
+    //       tracker score must beat the incumbent's by at least 15 %.
+    //       Below that we keep the current face selected so tiny score
+    //       fluctuations from the detector don't flicker the focus target
+    //       between two faces of similar size/confidence.
+    //
+    //   kDepthHysteresis: depth-based primary pick. The challenger must be
+    //       at least 10 % closer to the camera than the incumbent (i.e.
+    //       current_depth > challenger_depth * 1.10). This prevents
+    //       oscillation when two faces stand at near-identical distances
+    //       and normal depth noise would otherwise swap them every frame.
+    //
+    // Both multipliers are >1.0 by design; 1.0 would mean "any improvement
+    // wins", which produces visible jitter in real footage.
     int lastPrimaryId_ = -1;
     static constexpr float kPrimaryHysteresis = 1.15f;
     static constexpr float kDepthHysteresis   = 1.10f;
@@ -334,6 +358,27 @@ private:
     void sendFrameToClientAsync(uint8_t frameType, const QImage &frame,
                                 int quality, int maxW, int maxH,
                                 std::atomic<bool> &busyFlag);
+
+    // Shared serializer between the QML overlay and the wire broadcast.
+    QVariantMap serializeFaceEntry(const TrackedFace &face,
+                                   double invW, double invH,
+                                   int selectedId,
+                                   bool includeUIFields) const;
+
+    // Periodic "Sent N <label> frames" diagnostic — one implementation for
+    // all three video streams, so they can't drift out of sync with each
+    // other's format strings or log intervals.
+    void logStreamThrottled(int &counter, int every,
+                            const char *label, const QImage &frame);
+
+    // Per-stream sent-frame counters (used only for the throttled log).
+    // Kept as members instead of function-local statics so the counters
+    // reset naturally when AppController is recreated (e.g. tests).
+    int colorStreamCount_   = 0;
+    int depthStreamCount_   = 0;
+    int captureStreamCount_ = 0;
+    static constexpr int kStreamLogInterval  = 60;  // RealSense color/depth
+    static constexpr int kCaptureLogInterval = 30;  // main camera — half the spacing
 };
 
 } // namespace alice

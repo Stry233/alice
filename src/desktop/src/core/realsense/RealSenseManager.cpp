@@ -35,9 +35,16 @@ RealSenseManager::~RealSenseManager() {
 }
 
 void RealSenseManager::setMeasurementPosition(float x, float y) {
-    QMutexLocker lock(&positionMutex_);
-    measureX_ = std::clamp(x, 0.0f, 1.0f);
-    measureY_ = std::clamp(y, 0.0f, 1.0f);
+    const float cx = std::clamp(x, 0.0f, 1.0f);
+    const float cy = std::clamp(y, 0.0f, 1.0f);
+    {
+        QMutexLocker lock(&positionMutex_);
+        measureX_ = cx;
+        measureY_ = cy;
+    }
+    // Publish to the lock-free cache used by the UI thread.
+    measureXCached_.store(cx, std::memory_order_relaxed);
+    measureYCached_.store(cy, std::memory_order_relaxed);
 }
 
 void RealSenseManager::getMeasurementPosition(float &x, float &y) const {
@@ -266,11 +273,17 @@ void RealSenseManager::captureLoop() {
                     depthCacheH_ = h;
                 }
 
-                // Depth colormap: only generate every 3rd frame (expensive, visual only)
-                // AND only when at least one consumer is subscribed — the OPS view
-                // doesn't bind alice.depthFrame at all, so the colormap is wasted
-                // CPU unless CFG view is open or the sync stream is enabled.
-                if (colormapEnabled_ && frameCount % 3 == 0) {
+                // Depth colormap: only generate every Nth frame (expensive,
+                // visual only) AND only when at least one consumer is
+                // subscribed — the OPS view doesn't bind alice.depthFrame at
+                // all, so the colormap is wasted CPU unless CFG view is open
+                // or the sync stream is enabled.
+                //
+                // kColormapDownsample = 3 gives ~10 fps colormap at a 30 fps
+                // capture, which is plenty for a diagnostic overlay but
+                // saves ~20 colorizeDepth() calls per second.
+                static constexpr int kColormapDownsample = 3;
+                if (colormapEnabled_ && frameCount % kColormapDownsample == 0) {
                     QImage depthImage = colorizeDepth(data, w, h);
                     emit depthFrameReady(depthImage);
                 }

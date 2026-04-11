@@ -15,8 +15,11 @@ Item {
         title: "Export Calibration Mapping"
         fileMode: FileDialog.SaveFile
         nameFilters: ["JSON files (*.json)"]
+        defaultSuffix: "json"
         onAccepted: {
-            // TODO: export calibrationPoints to selectedFile
+            if (!alice) return
+            alice.saveMappingToFile(selectedFile, calibView.calibrationPoints,
+                                    "Calibration")
         }
     }
 

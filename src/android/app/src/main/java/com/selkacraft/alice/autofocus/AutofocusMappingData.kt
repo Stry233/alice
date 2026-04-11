@@ -140,9 +140,18 @@ data class AutofocusMapping(
             }
         }
 
-        // Linear interpolation
+        // Linear interpolation. validate() rejects duplicate depths, but
+        // it's caller-optional — a mapping loaded from a malformed JSON or
+        // mutated after the fact could still arrive here with two adjacent
+        // points at the same depth. Guard the divisor so we never divide
+        // by (near-)zero; fall back to the low endpoint instead. Matches
+        // the equivalent guard on the desktop AutofocusMapping.
         if (lowerPoint != null && upperPoint != null) {
-            val ratio = (depth - lowerPoint.depth) / (upperPoint.depth - lowerPoint.depth)
+            val depthSpan = upperPoint.depth - lowerPoint.depth
+            if (depthSpan <= DEPTH_SPAN_EPSILON) {
+                return lowerPoint.motorPosition.coerceIn(0, 4095)
+            }
+            val ratio = (depth - lowerPoint.depth) / depthSpan
             val interpolatedPosition = lowerPoint.motorPosition +
                     (ratio * (upperPoint.motorPosition - lowerPoint.motorPosition)).toInt()
             return interpolatedPosition.coerceIn(0, 4095)
@@ -152,6 +161,11 @@ data class AutofocusMapping(
     }
 
     companion object {
+        // Smallest depth span we'll still interpolate across. Values below
+        // this trigger an endpoint fallback to avoid NaN/Infinity from the
+        // ratio divisor when a malformed mapping has duplicate depths.
+        private const val DEPTH_SPAN_EPSILON = 1e-6f
+
         // Create Json instance with lenient parsing
         @OptIn(kotlinx.serialization.ExperimentalSerializationApi::class)
         private val json = Json {

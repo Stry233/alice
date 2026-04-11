@@ -421,8 +421,8 @@ void AppController::reconnectCam() {
 
 float AppController::depth() const { return currentDepth_; }
 float AppController::depthConfidence() const { return currentConfidence_; }
-float AppController::measureX() const { float x=0.5f, y=0.5f; realsense_->getMeasurementPosition(x, y); return x; }
-float AppController::measureY() const { float x=0.5f, y=0.5f; realsense_->getMeasurementPosition(x, y); return y; }
+float AppController::measureX() const { return realsense_->measureX(); }
+float AppController::measureY() const { return realsense_->measureY(); }
 
 // ── Autofocus ────────────────────────────────────────────────────────
 
@@ -496,6 +496,59 @@ void AppController::clearMapping() {
     }
 }
 
+bool AppController::saveMappingToFile(const QString &pathOrUrl,
+                                      const QVariantList &points,
+                                      const QString &name) {
+    // Normalise file:// URLs from the QML FileDialog, same as
+    // loadMappingFromFile() — std::ofstream can't open a URI.
+    QString localPath = pathOrUrl;
+    const QUrl url(pathOrUrl);
+    if (url.isLocalFile()) {
+        localPath = url.toLocalFile();
+    }
+
+    if (localPath.isEmpty()) {
+        log("AUTOFOCUS", "ERROR: saveMappingToFile called with empty path");
+        return false;
+    }
+    if (points.size() < 2) {
+        log("AUTOFOCUS", "ERROR: Need at least 2 calibration points to export a mapping");
+        return false;
+    }
+
+    std::vector<MappingPoint> mappingPoints;
+    mappingPoints.reserve(points.size());
+    for (const auto &entry : points) {
+        const QVariantMap m = entry.toMap();
+        MappingPoint p;
+        p.depth         = static_cast<float>(m.value("depth").toDouble());
+        p.motorPosition = m.value("motorPosition").toInt();
+        p.confidence    = static_cast<float>(m.value("confidence", 1.0).toDouble());
+        if (!p.isValid()) {
+            log("AUTOFOCUS", QString("ERROR: Invalid calibration point at index %1")
+                             .arg(mappingPoints.size()));
+            return false;
+        }
+        mappingPoints.push_back(p);
+    }
+
+    MappingMetadata metadata;
+    metadata.calibrationMethod = "manual";
+    metadata.createdAt = QDateTime::currentSecsSinceEpoch();
+
+    AutofocusMapping mapping(name.toStdString(), mappingPoints,
+                             /*description=*/"Exported from Alice Studio",
+                             metadata);
+
+    if (!mapping.saveToFile(localPath.toStdString())) {
+        log("AUTOFOCUS", QString("ERROR: Failed to write mapping to %1").arg(localPath));
+        return false;
+    }
+    log("AUTOFOCUS", QString("Mapping exported to %1 (%2 points)")
+                     .arg(localPath).arg(mappingPoints.size()));
+    return true;
+}
+
 // ── Motor control ────────────────────────────────────────────────────
 
 void AppController::setMotorPosition(int position) {
@@ -540,30 +593,49 @@ void AppController::selectFace(int trackingId) {
     broadcastTrackedFaces();
 }
 
+// Serialize a single tracked face into a QVariantMap. Both the QML
+// overlay (`trackedFaces()`) and the wire broadcast (`broadcastTrackedFaces()`)
+// emit the same geometry fields — only the QML path needs the extra
+// `selected` + `color` hints, since the wire message carries the active
+// face id at the top level instead. Keeping the field list in one place
+// makes sure the two consumers never drift apart.
+QVariantMap AppController::serializeFaceEntry(const TrackedFace &face,
+                                              double invW, double invH,
+                                              int selectedId,
+                                              bool includeUIFields) const
+{
+    QVariantMap m;
+    m["id"] = face.trackingId;
+    m["x"] = face.boundingBox.x() * invW;
+    m["y"] = face.boundingBox.y() * invH;
+    m["w"] = face.boundingBox.width()  * invW;
+    m["h"] = face.boundingBox.height() * invH;
+    m["centerX"] = face.center.x();
+    m["centerY"] = face.center.y();
+    m["confidence"] = static_cast<double>(face.confidence);
+    m["state"] = static_cast<int>(face.state);
+    if (includeUIFields) {
+        m["selected"] = (face.trackingId == selectedId);
+        m["color"] = face.color.name();
+    }
+    if (face.leftEye)  { m["leftEyeX"]  = face.leftEye->x();  m["leftEyeY"]  = face.leftEye->y(); }
+    if (face.rightEye) { m["rightEyeX"] = face.rightEye->x(); m["rightEyeY"] = face.rightEye->y(); }
+    return m;
+}
+
+static std::pair<double, double> faceFrameInverses(int width, int height) {
+    return { (width  > 0) ? 1.0 / width  : 1.0,
+             (height > 0) ? 1.0 / height : 1.0 };
+}
+
 QVariantList AppController::trackedFaces() const {
     QVariantList out;
     out.reserve(static_cast<int>(lastTrackedFaces_.size()));
     const int selectedId = subjectTracker_->selectedFaceId();
-    const double invW = (faceFrameWidth_  > 0) ? 1.0 / faceFrameWidth_  : 1.0;
-    const double invH = (faceFrameHeight_ > 0) ? 1.0 / faceFrameHeight_ : 1.0;
+    const auto [invW, invH] = faceFrameInverses(faceFrameWidth_, faceFrameHeight_);
 
     for (const auto &face : lastTrackedFaces_) {
-        QVariantMap m;
-        m["id"] = face.trackingId;
-        // Normalised bbox so QML can lay it out over any preview size.
-        m["x"] = face.boundingBox.x() * invW;
-        m["y"] = face.boundingBox.y() * invH;
-        m["w"] = face.boundingBox.width()  * invW;
-        m["h"] = face.boundingBox.height() * invH;
-        m["centerX"] = face.center.x();
-        m["centerY"] = face.center.y();
-        m["confidence"] = face.confidence;
-        m["selected"] = (face.trackingId == selectedId);
-        m["state"] = static_cast<int>(face.state);
-        m["color"] = face.color.name();
-        if (face.leftEye)  { m["leftEyeX"]  = face.leftEye->x();  m["leftEyeY"]  = face.leftEye->y(); }
-        if (face.rightEye) { m["rightEyeX"] = face.rightEye->x(); m["rightEyeY"] = face.rightEye->y(); }
-        out.append(m);
+        out.append(serializeFaceEntry(face, invW, invH, selectedId, /*includeUIFields=*/true));
     }
     return out;
 }
@@ -577,30 +649,13 @@ void AppController::broadcastTrackedFaces() {
     if (now - lastFaceBroadcastMs_ < minFrameIntervalMs_) return;
     lastFaceBroadcastMs_ = now;
 
-    const double invW = (faceFrameWidth_  > 0) ? 1.0 / faceFrameWidth_  : 1.0;
-    const double invH = (faceFrameHeight_ > 0) ? 1.0 / faceFrameHeight_ : 1.0;
+    const auto [invW, invH] = faceFrameInverses(faceFrameWidth_, faceFrameHeight_);
 
     QJsonArray faces;
     for (const auto &face : lastTrackedFaces_) {
-        QJsonObject o;
-        o["id"] = face.trackingId;
-        o["x"] = face.boundingBox.x() * invW;
-        o["y"] = face.boundingBox.y() * invH;
-        o["w"] = face.boundingBox.width()  * invW;
-        o["h"] = face.boundingBox.height() * invH;
-        o["centerX"] = face.center.x();
-        o["centerY"] = face.center.y();
-        o["confidence"] = static_cast<double>(face.confidence);
-        o["state"] = static_cast<int>(face.state);
-        if (face.leftEye) {
-            o["leftEyeX"] = face.leftEye->x();
-            o["leftEyeY"] = face.leftEye->y();
-        }
-        if (face.rightEye) {
-            o["rightEyeX"] = face.rightEye->x();
-            o["rightEyeY"] = face.rightEye->y();
-        }
-        faces.append(o);
+        const auto entry = serializeFaceEntry(face, invW, invH, /*selectedId=*/-1,
+                                              /*includeUIFields=*/false);
+        faces.append(QJsonObject::fromVariantMap(entry));
     }
 
     syncServer_->broadcast(SyncMessage::faceTracking(
@@ -820,17 +875,13 @@ void AppController::onColorFrame(const QImage &frame) {
     // Stream to remote client (throttled). RealSense color is an overlay on
     // the Android client, so clamp to kOverlayMaxW×kOverlayMaxH and use the
     // lower overlay quality.
-    static int colorStreamCount = 0;
     if (streamColor_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastColorSendMs_ >= minFrameIntervalMs_) {
             lastColorSendMs_ = now;
             sendFrameToClient(kFrameTypeColor, frame, streamQualityColor_,
                               kOverlayMaxW, kOverlayMaxH);
-            if (++colorStreamCount % 60 == 0) {
-                fprintf(stderr, "[STREAM] Sent %d color frames (%dx%d)\n",
-                        colorStreamCount, frame.width(), frame.height());
-            }
+            logStreamThrottled(colorStreamCount_, kStreamLogInterval, "color", frame);
         }
     }
 }
@@ -840,17 +891,13 @@ void AppController::onDepthFrame(const QImage &frame) {
     emit depthFrameChanged();
 
     // Depth colormap is an overlay — aggressive downscale + low quality.
-    static int depthStreamCount = 0;
     if (streamDepth_ && !depthEncodeBusy_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastDepthSendMs_ >= minFrameIntervalMs_) {
             lastDepthSendMs_ = now;
             sendFrameToClientAsync(kFrameTypeDepth, frame, streamQualityDepth_,
                                    kOverlayMaxW, kOverlayMaxH, depthEncodeBusy_);
-            if (++depthStreamCount % 60 == 0) {
-                fprintf(stderr, "[STREAM] Sent %d depth frames (%dx%d)\n",
-                        depthStreamCount, frame.width(), frame.height());
-            }
+            logStreamThrottled(depthStreamCount_, kStreamLogInterval, "depth", frame);
         }
     }
 }
@@ -861,18 +908,22 @@ void AppController::onCaptureFrame(const QImage &frame) {
 
     // Capture card is the main-view monitoring feed. Keep it at native 1080p
     // (downscaled only for 4K+ sources) with the high-quality JPEG encoder.
-    static int captureStreamCount = 0;
     if (streamCapture_ && !captureEncodeBusy_) {
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastCaptureSendMs_ >= minFrameIntervalMs_) {
             lastCaptureSendMs_ = now;
             sendFrameToClientAsync(kFrameTypeCapture, frame, streamQualityCapture_,
                                    kCaptureMaxW, kCaptureMaxH, captureEncodeBusy_);
-            if (++captureStreamCount % 30 == 0) {
-                fprintf(stderr, "[STREAM] Sent %d capture frames (%dx%d)\n",
-                        captureStreamCount, frame.width(), frame.height());
-            }
+            logStreamThrottled(captureStreamCount_, kCaptureLogInterval, "capture", frame);
         }
+    }
+}
+
+void AppController::logStreamThrottled(int &counter, int every,
+                                       const char *label, const QImage &frame) {
+    if (++counter % every == 0) {
+        fprintf(stderr, "[STREAM] Sent %d %s frames (%dx%d)\n",
+                counter, label, frame.width(), frame.height());
     }
 }
 

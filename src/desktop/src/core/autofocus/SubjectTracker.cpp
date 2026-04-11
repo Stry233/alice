@@ -159,8 +159,7 @@ std::vector<TrackedFace> SubjectTracker::update(
     std::vector<bool> detMatched(detections.size(), false);
     std::vector<bool> trackMatched(tracks_.size(), false);
 
-    auto applyDetection = [&](Track &track, size_t detIdx, int fallbackW, int fallbackH) {
-        (void)fallbackW; (void)fallbackH;
+    auto applyDetection = [&](Track &track, size_t detIdx) {
         const auto &det = detections[detIdx];
         const float cx = static_cast<float>(det.boundingBox.center().x()) / imgW;
         const float cy = static_cast<float>(det.boundingBox.center().y()) / imgH;
@@ -195,7 +194,7 @@ std::vector<TrackedFace> SubjectTracker::update(
         if (bestDet >= 0) {
             trackMatched[ti] = true;
             detMatched[bestDet] = true;
-            applyDetection(tracks_[ti], static_cast<size_t>(bestDet), imageWidth, imageHeight);
+            applyDetection(tracks_[ti], static_cast<size_t>(bestDet));
         }
     }
 
@@ -219,7 +218,7 @@ std::vector<TrackedFace> SubjectTracker::update(
         if (bestDet >= 0) {
             trackMatched[ti] = true;
             detMatched[bestDet] = true;
-            applyDetection(tracks_[ti], static_cast<size_t>(bestDet), imageWidth, imageHeight);
+            applyDetection(tracks_[ti], static_cast<size_t>(bestDet));
         }
     }
 
@@ -272,7 +271,7 @@ std::vector<TrackedFace> SubjectTracker::update(
             (void)bestViaHist;
             trackMatched[bestTrack] = true;
             detMatched[di] = true;
-            applyDetection(tracks_[bestTrack], di, imageWidth, imageHeight);
+            applyDetection(tracks_[bestTrack], di);
         }
     }
 

@@ -115,7 +115,9 @@ void MotorController::setPosition(int position) {
     if (smoothingEnabled_ && hasPreviousPosition_) {
         smoothedPosition_ = smoothedPosition_ * (1.0f - kSmoothingAlpha)
                           + static_cast<float>(transformed) * kSmoothingAlpha;
-        transformed = std::clamp(static_cast<int>(smoothedPosition_), 0, 4095);
+        transformed = std::clamp(static_cast<int>(smoothedPosition_),
+                                 MotorProtocol::kMinPosition,
+                                 MotorProtocol::kMaxPosition);
     } else {
         smoothedPosition_ = static_cast<float>(transformed);
         hasPreviousPosition_ = true;
@@ -153,6 +155,14 @@ void MotorController::onReadyRead() {
     if (!serial_) return;
     QByteArray data = serial_->readAll();
     lineBuffer_.append(QString::fromUtf8(data));
+
+    // Defensive cap: the protocol is strictly line-based (newline-terminated
+    // ASCII), so any buffer that grows past a few KB without hitting '\n' is
+    // almost certainly a firmware glitch streaming binary garbage. Drop all
+    // but the trailing 1 KB so a misbehaving dongle can't OOM the process.
+    if (lineBuffer_.size() > kMaxLineBufferBytes) {
+        lineBuffer_ = lineBuffer_.right(kLineBufferTrimTail);
+    }
 
     // Process complete lines
     int newlineIdx;
@@ -200,8 +210,13 @@ void MotorController::onSerialError(QSerialPort::SerialPortError err) {
 }
 
 int MotorController::applyTransform(int position) const {
-    int pos = std::clamp(position + offset_, 0, 4095);
-    if (reversed_) pos = 4095 - pos;
+    // nRF52840 motor dongle uses a 12-bit encoder (0..kMaxPosition=4095).
+    // `reversed_` is a per-install setting for rigs where the physical lens
+    // rotation direction is inverted — we mirror about the midpoint so the
+    // caller-facing API stays "0 = near, max = far" regardless.
+    int pos = std::clamp(position + offset_, MotorProtocol::kMinPosition,
+                         MotorProtocol::kMaxPosition);
+    if (reversed_) pos = MotorProtocol::kMaxPosition - pos;
     return pos;
 }
 

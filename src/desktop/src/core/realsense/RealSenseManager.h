@@ -38,6 +38,10 @@ public:
     float currentConfidence() const { return confidence_; }
     qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
     qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
+    /** Lock-free read of the current measurement X (normalised 0..1). */
+    float measureX() const { return measureXCached_.load(std::memory_order_relaxed); }
+    /** Lock-free read of the current measurement Y (normalised 0..1). */
+    float measureY() const { return measureYCached_.load(std::memory_order_relaxed); }
     /** Human-readable model name from RS2_CAMERA_INFO_NAME (e.g. "Intel RealSense D455"). */
     QString deviceName() const { QMutexLocker l(&deviceInfoMutex_); return deviceName_; }
     /** Bus identifier (typically "USB 3.x") for the attached camera. */
@@ -107,6 +111,12 @@ private:
     mutable QMutex positionMutex_;
     float measureX_ = 0.5f;
     float measureY_ = 0.5f;
+    // Lock-free mirrors of measureX_/measureY_ for QML binding reads at
+    // ~60 Hz. Written under positionMutex_ in setMeasurementPosition and
+    // read atomically from the UI thread to avoid taking the mutex from
+    // two separate property getters per paint (measureX() and measureY()).
+    std::atomic<float> measureXCached_{0.5f};
+    std::atomic<float> measureYCached_{0.5f};
     int roiSize_ = kDefaultRoiSize;
 
     // Current state

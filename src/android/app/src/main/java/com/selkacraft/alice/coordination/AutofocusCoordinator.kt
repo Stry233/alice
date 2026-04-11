@@ -43,6 +43,45 @@ class AutofocusCoordinator(
     // Expose face detection state for UI
     val faceDetectionState: StateFlow<FaceDetectionState> = faceDetectionProcessor.faceDetectionState
 
+    // Primary-face handoff hysteresis. In AF-F we don't want the focus point
+    // to flicker between two similarly-scored faces every frame, so we keep
+    // the last-chosen face "sticky": a challenger only steals the primary
+    // slot if its score beats the incumbent by at least PRIMARY_SCORE_HYST.
+    // Resets on manual tap selection and on leaving FACE_TRACKING mode.
+    //
+    // Mirrors the desktop AppController's kPrimaryHysteresis = 1.15f.
+    private var lastPrimaryFaceId: Int? = null
+    private val PRIMARY_SCORE_HYSTERESIS = 1.15f
+
+    private fun pickPrimaryWithHysteresis(state: FaceDetectionState): DetectedFace? {
+        // If the user has manually tapped a face, honour that selection —
+        // FaceDetectionState.defaultFocusTarget already does this but we
+        // re-check explicitly so we can update lastPrimaryFaceId to match
+        // and seamlessly take over after the manual selection is cleared.
+        state.selectedFace?.let {
+            lastPrimaryFaceId = it.trackingId
+            return it
+        }
+
+        val faces = state.detectedFaces
+        if (faces.isEmpty()) {
+            lastPrimaryFaceId = null
+            return null
+        }
+
+        val topScored = faces.maxByOrNull { it.score } ?: return null
+        val incumbent = faces.find { it.trackingId == lastPrimaryFaceId }
+
+        val primary = when {
+            incumbent == null -> topScored
+            incumbent.trackingId == topScored.trackingId -> topScored
+            topScored.score >= incumbent.score * PRIMARY_SCORE_HYSTERESIS -> topScored
+            else -> incumbent
+        }
+        lastPrimaryFaceId = primary.trackingId
+        return primary
+    }
+
     /**
      * Initialize all autofocus integration logic
      */
@@ -259,9 +298,11 @@ class AutofocusCoordinator(
                 autofocusController.updateFaceDetectionState(faceState)
 
                 // Update RealSense measurement position based on selected face's focus point
-                // This now uses eye position when available (DSLR-quality Eye AF)
+                // This now uses eye position when available (DSLR-quality Eye AF).
+                // pickPrimaryWithHysteresis keeps the primary "sticky" between
+                // near-tied candidates so the measurement point doesn't flicker.
                 if (autofocusController.state.value.mode == FocusMode.FACE_TRACKING) {
-                    val targetFace = faceState.defaultFocusTarget
+                    val targetFace = pickPrimaryWithHysteresis(faceState)
                     if (targetFace != null) {
                         // Use the focus point (eye when available, face center otherwise)
                         val focusPoint = targetFace.getFocusPointFor(faceState.focusTargetPreference)
@@ -276,6 +317,10 @@ class AutofocusCoordinator(
                         }
                         // Only log state changes to avoid spam
                     }
+                } else {
+                    // Not in AF-F: drop the sticky primary so the next entry
+                    // into the mode starts from a clean slate.
+                    lastPrimaryFaceId = null
                 }
             }
         }
