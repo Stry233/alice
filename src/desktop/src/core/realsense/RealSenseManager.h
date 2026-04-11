@@ -26,6 +26,8 @@ class RealSenseManager : public QObject {
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(float depth READ currentDepth NOTIFY depthChanged)
     Q_PROPERTY(float confidence READ currentConfidence NOTIFY depthChanged)
+    Q_PROPERTY(qint64 connectedSinceMs READ connectedSinceMs NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 lastDisconnectMs READ lastDisconnectMs NOTIFY connectionChanged)
 
 public:
     explicit RealSenseManager(QObject *parent = nullptr);
@@ -34,9 +36,29 @@ public:
     bool isConnected() const { return connected_; }
     float currentDepth() const { return depth_; }
     float currentConfidence() const { return confidence_; }
+    qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
+    qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
 
     void setMeasurementPosition(float x, float y);
     void getMeasurementPosition(float &x, float &y) const;
+
+    /**
+     * Sample the depth (in meters) at a point in the color frame.
+     * @param nx Normalised X in [0, 1] (color-frame coordinates)
+     * @param ny Normalised Y in [0, 1]
+     * @return Depth in meters, or 0 if no valid data at the point.
+     *
+     * Reads from the last captured depth frame (already aligned to color),
+     * sampling a small neighbourhood and returning the median of valid
+     * depths to suppress holes. Thread-safe — callable from any thread.
+     */
+    float depthAt(float nx, float ny) const;
+
+    // Enable/disable generation of the colorized depth visualisation.
+    // When disabled, captureLoop skips the expensive colorizeDepth() call
+    // entirely. Safe to call from any thread.
+    void setColormapEnabled(bool enabled) { colormapEnabled_ = enabled; }
+    bool isColormapEnabled() const { return colormapEnabled_.load(); }
 
     // Configuration
     void setStreamConfig(int depthW, int depthH, int depthFps, int colorW, int colorH, int colorFps);
@@ -86,6 +108,22 @@ private:
     // Current state
     std::atomic<float> depth_{0.0f};
     std::atomic<float> confidence_{0.0f};
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    std::atomic<qint64> connectedSinceMs_{0};
+    std::atomic<qint64> lastDisconnectMs_{0};
+
+    // Visual colormap is expensive — only generate when something will
+    // actually consume the result (depth overlay visible or sync stream on).
+    std::atomic<bool> colormapEnabled_{false};
+
+    // Cache of the most recent color-aligned depth frame so that consumers
+    // (face tracker, per-eye depth sampling) can query depths away from
+    // the crosshair without waiting for the capture thread.
+    mutable QMutex depthCacheMutex_;
+    std::vector<uint16_t> depthCache_;
+    int depthCacheW_ = 0;
+    int depthCacheH_ = 0;
 
     // Frame timeout watchdog (main thread timer)
     QTimer frameTimeoutTimer_;

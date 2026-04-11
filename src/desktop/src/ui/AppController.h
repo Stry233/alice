@@ -6,6 +6,9 @@
 #include <QTimer>
 #include <QVariantList>
 #include <memory>
+#include <vector>
+
+#include "core/autofocus/SubjectTracker.h"
 
 namespace alice {
 
@@ -33,6 +36,14 @@ class AppController : public QObject {
     Q_PROPERTY(bool captureCardConnected READ captureCardConnected NOTIFY deviceStateChanged)
     Q_PROPERTY(int motorPosition READ motorPosition NOTIFY motorPositionChanged)
 
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    Q_PROPERTY(qint64 motorConnectedSinceMs READ motorConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 motorLastDisconnectMs READ motorLastDisconnectMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 realSenseConnectedSinceMs READ realSenseConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 realSenseLastDisconnectMs READ realSenseLastDisconnectMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 captureCardConnectedSinceMs READ captureCardConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 captureCardLastDisconnectMs READ captureCardLastDisconnectMs NOTIFY deviceStateChanged)
+
     // Depth
     Q_PROPERTY(float depth READ depth NOTIFY depthChanged)
     Q_PROPERTY(float depthConfidence READ depthConfidence NOTIFY depthChanged)
@@ -46,6 +57,9 @@ class AppController : public QObject {
     Q_PROPERTY(bool hasMapping READ hasMapping NOTIFY autofocusStateChanged)
     Q_PROPERTY(int targetMotorPosition READ targetMotorPosition NOTIFY autofocusStateChanged)
     Q_PROPERTY(QString mappingName READ mappingName NOTIFY autofocusStateChanged)
+
+    // Face tracking (reactive binding for QML overlay)
+    Q_PROPERTY(QVariantList trackedFacesList READ trackedFaces NOTIFY trackedFacesChanged)
 
     // Network
     Q_PROPERTY(bool syncServerRunning READ syncServerRunning NOTIFY syncStateChanged)
@@ -87,6 +101,26 @@ public:
     bool captureCardConnected() const;
     int motorPosition() const;
 
+    qint64 motorConnectedSinceMs() const;
+    qint64 motorLastDisconnectMs() const;
+    qint64 realSenseConnectedSinceMs() const;
+    qint64 realSenseLastDisconnectMs() const;
+    qint64 captureCardConnectedSinceMs() const;
+    qint64 captureCardLastDisconnectMs() const;
+
+    // ── User-initiated device control ────────────────────────────────
+    Q_INVOKABLE void restartMotor();
+    Q_INVOKABLE void disconnectMotor();
+    Q_INVOKABLE void reconnectMotor();
+
+    Q_INVOKABLE void restartDepth();
+    Q_INVOKABLE void disconnectDepth();
+    Q_INVOKABLE void reconnectDepth();
+
+    Q_INVOKABLE void restartCam();
+    Q_INVOKABLE void disconnectCam();
+    Q_INVOKABLE void reconnectCam();
+
     // ── Depth ────────────────────────────────────────────────────────
     float depth() const;
     float depthConfidence() const;
@@ -120,6 +154,11 @@ public:
     // ── Face tracking ────────────────────────────────────────────────
     Q_INVOKABLE void selectFace(int trackingId);
     Q_INVOKABLE QVariantList trackedFaces() const;
+    // Resolution of the frame the last detection ran against (for QML to
+    // map pixel-space bboxes into preview coordinates). Returns 0,0 until
+    // the first color frame arrives.
+    Q_INVOKABLE int faceFrameWidth() const { return faceFrameWidth_; }
+    Q_INVOKABLE int faceFrameHeight() const { return faceFrameHeight_; }
 
     // ── Resolution / transmission quality ─────────────────────────────
     QVariantList realSenseDepthModes() const;
@@ -155,7 +194,13 @@ public:
 
     // ── UI state ─────────────────────────────────────────────────────
     bool showDepthOverlay() const { return showDepthOverlay_; }
-    void setShowDepthOverlay(bool v) { if (showDepthOverlay_ != v) { showDepthOverlay_ = v; emit showDepthOverlayChanged(); } }
+    void setShowDepthOverlay(bool v) {
+        if (showDepthOverlay_ != v) {
+            showDepthOverlay_ = v;
+            updateDepthColormapGate();
+            emit showDepthOverlayChanged();
+        }
+    }
 
 signals:
     void showDepthOverlayChanged();
@@ -170,6 +215,7 @@ signals:
     void depthFrameChanged();
     void captureFrameChanged();
     void txSettingsChanged();
+    void trackedFacesChanged();
 
 private slots:
     void onDepthChanged(float depth, float confidence);
@@ -185,6 +231,8 @@ private:
     void notifyRemoteDeviceStates();
     void broadcastModeChange();
     void broadcastCurrentMapping();
+    void broadcastTrackedFaces();
+    void updateDepthColormapGate();
 
     // Core components
     std::unique_ptr<RealSenseManager> realsense_;
@@ -214,6 +262,20 @@ private:
     float currentDepth_ = 0.0f;
     float currentConfidence_ = 0.0f;
 
+    // Cached tracked faces from the most recent detection pass (also pushed
+    // to the sync peer for cross-device overlay).
+    std::vector<TrackedFace> lastTrackedFaces_;
+    int faceFrameWidth_ = 0;
+    int faceFrameHeight_ = 0;
+    qint64 lastFaceBroadcastMs_ = 0;
+    // Auto-selected primary face id for hysteresis — an incoming detection
+    // only steals primary from the current one if its score beats this
+    // value times the hysteresis multiplier (or gets closer in depth by
+    // the depth hysteresis multiplier).
+    int lastPrimaryId_ = -1;
+    static constexpr float kPrimaryHysteresis = 1.15f;
+    static constexpr float kDepthHysteresis   = 1.10f;
+
     // UI state
     bool showDepthOverlay_ = false;
 
@@ -238,10 +300,14 @@ private:
     int64_t lastCaptureSendMs_ = 0;
     int64_t minFrameIntervalMs_ = 33; // ~30fps max per stream
 
-    // Busy flag to skip frames while previous encode is in flight
+    // Busy flags: skip frames while a previous encode for the same stream
+    // is still in flight, so we never pile up work on the thread pool.
     std::atomic<bool> captureEncodeBusy_{false};
+    std::atomic<bool> depthEncodeBusy_{false};
 
     void sendFrameToClient(uint8_t frameType, const QImage &frame, int quality);
+    void sendFrameToClientAsync(uint8_t frameType, const QImage &frame, int quality,
+                                std::atomic<bool> &busyFlag);
 };
 
 } // namespace alice

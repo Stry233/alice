@@ -124,6 +124,81 @@ The binary will be at `src/desktop/build/AliceStudio`.
 
 The app will auto-discover connected hardware (RealSense, motor dongle, capture card). Check the log panel at the bottom for connection status and errors.
 
+### GPU acceleration (face tracking)
+
+Alice Studio's face tracker runs the YOLO-face ONNX model through ONNX Runtime. It auto-selects the fastest execution provider your ONNX Runtime install was built with, in this priority order:
+
+```
+TensorRT  →  CUDA  →  DirectML (Windows)  →  CoreML (macOS)  →  CPU
+```
+
+At startup the log line reads something like `Face detector loaded: yolov11s-face.onnx (EP=CUDA)`. If you're stuck on `(EP=CPU)` and want hardware acceleration, swap your ONNX Runtime build — **no need to recompile Alice**, just point it at a different library at launch time:
+
+**Linux · NVIDIA**
+
+```bash
+# Download a GPU-enabled prebuilt release from:
+#   https://github.com/microsoft/onnxruntime/releases
+cd /opt
+sudo tar xzf ~/Downloads/onnxruntime-linux-x64-gpu-1.20.1.tgz
+sudo mv onnxruntime-linux-x64-gpu-1.20.1 onnxruntime-gpu
+
+# Rebuild Alice against this copy:
+cd <alice>/src/desktop/build
+cmake .. -DONNXRUNTIME_ROOT=/opt/onnxruntime-gpu
+cmake --build .
+
+# Run with the GPU onnxruntime on LD_LIBRARY_PATH:
+LD_LIBRARY_PATH=/opt/onnxruntime-gpu/lib ./AliceStudio
+```
+
+The prebuilt Linux GPU bundle includes CUDA + cuDNN + TensorRT support. Requires a recent NVIDIA driver (≥ R525) and CUDA 12 runtime — both are already on most workstations with an RTX card.
+
+**Windows · any modern GPU (NVIDIA / AMD / Intel)**
+
+```powershell
+# DirectML works with any DX12 GPU and doesn't need CUDA installed.
+# Download: https://github.com/microsoft/onnxruntime/releases
+#   onnxruntime-win-x64-directml-1.20.1.zip
+Expand-Archive .\onnxruntime-win-x64-directml-1.20.1.zip -DestinationPath C:\onnxruntime
+
+cmake .. -DCMAKE_PREFIX_PATH=C:\Qt\6.6.0\msvc2022_64 `
+         -DONNXRUNTIME_ROOT=C:\onnxruntime\onnxruntime-win-x64-directml-1.20.1
+cmake --build . --config Release
+```
+
+Copy `onnxruntime.dll` and `DirectML.dll` next to `AliceStudio.exe` (or put them on `PATH`) before launching.
+
+**Windows · NVIDIA only, maximum perf**
+
+Use the `onnxruntime-win-x64-gpu-*.zip` release instead for TensorRT+CUDA. Same `ONNXRUNTIME_ROOT` flow; ship `onnxruntime.dll`, `onnxruntime_providers_cuda.dll`, `onnxruntime_providers_tensorrt.dll`, and `onnxruntime_providers_shared.dll` next to the exe.
+
+**macOS · Apple Silicon**
+
+```bash
+# CoreML support requires an ONNX Runtime build with --use_coreml. The
+# stock Homebrew formula is CPU-only; either build from source or grab a
+# prebuilt release.
+cmake .. -DCMAKE_PREFIX_PATH=/opt/homebrew/Cellar/qt@6/6.6.0 \
+         -DONNXRUNTIME_ROOT=/opt/onnxruntime-osx-arm64-coreml
+cmake --build .
+```
+
+The CoreML EP routes supported ops to the Apple Neural Engine + GPU and falls back to CPU for the rest — no extra runtime flags needed.
+
+**Verifying which EP is active**
+
+```
+[HH:MM:SS] [AUTOFOCUS] Face detector loaded: yolov11s-face.onnx (EP=CUDA)
+```
+
+If the EP line still reads `CPU` after a swap:
+- `ldd ./AliceStudio | grep onnxruntime` (Linux) / `dumpbin /dependents AliceStudio.exe` (Windows) — confirm Alice is linking the right library.
+- Check Alice's log panel for any `CUDA EP present but failed to init` / `TensorRT EP ...` lines — the EP was offered by the library but refused to initialize (typical causes: wrong driver, missing cuDNN, unsupported GPU).
+- Verify ONNX Runtime sees the provider: `python3 -c "import onnxruntime; print(onnxruntime.get_available_providers())"` against the same onnxruntime install.
+
+**No GPU? Skip all of the above.** The CPU path on a modern desktop runs yolov11s-face in ~15 ms/frame (60+ fps detection) which is already faster than the 30 fps camera. GPU is only worth the effort if you're moving to 4K capture or a much larger model.
+
 ---
 
 ## Dongle Firmware

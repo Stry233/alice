@@ -1,6 +1,16 @@
 cmake_minimum_required(VERSION 3.21)
 project(AliceStudio VERSION 0.1 LANGUAGES CXX)
 
+# Default to a Release build when the caller hasn't specified one. Without
+# this, GCC falls back to -O0 and all of the depth-processing hot paths
+# (bilateral filter, Kalman update, colormap loop) run ~5–10× slower than
+# they should. Honour the value if the user already set it (e.g. Debug).
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING
+        "Build type (Debug, Release, RelWithDebInfo, MinSizeRel)" FORCE)
+    message(STATUS "CMAKE_BUILD_TYPE not set — defaulting to Release")
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
@@ -14,10 +24,37 @@ qt_standard_project_setup(REQUIRES 6.5)
 find_package(realsense2 REQUIRED)
 
 # ONNX Runtime
+#
+# Search order:
+#   1. find_package(OnnxRuntime) — if a CMake package file is installed.
+#   2. ONNXRUNTIME_ROOT cache var or env var — explicit path, e.g. to a
+#      pre-built GPU release extracted under /opt/onnxruntime-linux-x64-gpu-*.
+#      This is the most common path for enabling CUDA / TensorRT / DirectML
+#      without rebuilding ONNX Runtime from source.
+#   3. System paths — whatever libonnxruntime the OS package ships (usually
+#      CPU-only on Linux distros).
+#
+# At runtime FaceDetector::loadModel will pick the fastest available EP
+# from whatever this library was built with — you don't need to recompile
+# Alice to switch between CPU and GPU, you just swap the onnxruntime that
+# it links against (and ensure it's on LD_LIBRARY_PATH / PATH at launch).
 find_package(OnnxRuntime QUIET)
 if(NOT OnnxRuntime_FOUND)
-    find_library(ONNXRUNTIME_LIB onnxruntime)
-    find_path(ONNXRUNTIME_INCLUDE onnxruntime_cxx_api.h PATH_SUFFIXES onnxruntime)
+    set(_ort_hint_root "${ONNXRUNTIME_ROOT}")
+    if(NOT _ort_hint_root AND DEFINED ENV{ONNXRUNTIME_ROOT})
+        set(_ort_hint_root "$ENV{ONNXRUNTIME_ROOT}")
+    endif()
+    if(_ort_hint_root)
+        message(STATUS "Using ONNXRUNTIME_ROOT=${_ort_hint_root}")
+    endif()
+
+    find_library(ONNXRUNTIME_LIB onnxruntime
+        HINTS ${_ort_hint_root}/lib ${_ort_hint_root}/lib64
+        PATHS /usr/local/lib /opt/onnxruntime/lib)
+    find_path(ONNXRUNTIME_INCLUDE onnxruntime_cxx_api.h
+        HINTS ${_ort_hint_root}/include ${_ort_hint_root}/include/onnxruntime
+        PATHS /usr/local/include /opt/onnxruntime/include
+        PATH_SUFFIXES onnxruntime)
     if(ONNXRUNTIME_LIB AND ONNXRUNTIME_INCLUDE)
         add_library(OnnxRuntime::OnnxRuntime INTERFACE IMPORTED)
         set_target_properties(OnnxRuntime::OnnxRuntime PROPERTIES
@@ -25,7 +62,25 @@ if(NOT OnnxRuntime_FOUND)
             INTERFACE_INCLUDE_DIRECTORIES "${ONNXRUNTIME_INCLUDE}"
         )
         set(OnnxRuntime_FOUND TRUE)
+        message(STATUS "ONNX Runtime: ${ONNXRUNTIME_LIB}")
     endif()
+endif()
+
+# Report which GPU execution providers are likely to be available at
+# runtime, based on the platform and what's on disk. This is advisory —
+# the final EP selection happens at runtime via Ort::GetAvailableProviders.
+if(OnnxRuntime_FOUND)
+    set(_ort_eps "CPU")
+    if(WIN32)
+        list(APPEND _ort_eps "DirectML (if onnxruntime-directml)")
+        list(APPEND _ort_eps "CUDA (if onnxruntime-gpu)")
+    elseif(APPLE)
+        list(APPEND _ort_eps "CoreML (if onnxruntime with CoreML)")
+    elseif(UNIX)
+        list(APPEND _ort_eps "CUDA (if onnxruntime-gpu)")
+        list(APPEND _ort_eps "TensorRT (if onnxruntime-gpu with TRT)")
+    endif()
+    message(STATUS "ONNX Runtime candidate EPs for this platform: ${_ort_eps}")
 endif()
 
 # nlohmann/json (header-only)
@@ -116,7 +171,6 @@ qt_add_qml_module(alice_ui
         src/ui/AppController.h src/ui/AppController.cpp
         src/ui/VideoRenderer.h src/ui/VideoRenderer.cpp
         src/ui/DepthRenderer.h src/ui/DepthRenderer.cpp
-        src/ui/FaceOverlay.h src/ui/FaceOverlay.cpp
         src/ui/HistogramRenderer.h src/ui/HistogramRenderer.cpp
     QML_FILES
         src/ui/qml/Main.qml
@@ -141,6 +195,7 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/MiniMap.qml
         src/ui/qml/components/BadgePopover.qml
         src/ui/qml/components/SyncPopover.qml
+        src/ui/qml/components/FaceOverlay.qml
         src/ui/qml/SplashScreen.qml
         src/ui/qml/CfgView.qml
         src/ui/qml/components/CalibrationTable.qml
@@ -176,6 +231,31 @@ target_link_libraries(AliceStudio PRIVATE
     Qt6::Svg
 )
 qt_import_qml_plugins(AliceStudio)
+
+# Stage the YOLO-face ONNX models next to the binary at build time so
+# AppController can load them via QCoreApplication::applicationDirPath() +
+# "/models/<name>.onnx" without extra runtime configuration. The larger
+# yolov11s-face model is preferred; the nano yolo-face is kept as a
+# smaller fallback for low-end machines or CI.
+set(ALICE_FACE_MODEL_CANDIDATES
+    "yolov11s-face.onnx"
+    "yolo-face.onnx")
+
+add_custom_command(TARGET AliceStudio POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory
+        "$<TARGET_FILE_DIR:AliceStudio>/models"
+    COMMENT "Creating models directory next to AliceStudio")
+
+foreach(model ${ALICE_FACE_MODEL_CANDIDATES})
+    set(src "${CMAKE_CURRENT_SOURCE_DIR}/assets/models/${model}")
+    if(EXISTS "${src}")
+        add_custom_command(TARGET AliceStudio POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${src}" "$<TARGET_FILE_DIR:AliceStudio>/models/${model}"
+            COMMENT "Staging ${model} next to AliceStudio")
+        install(FILES "${src}" DESTINATION share/alice-studio/models)
+    endif()
+endforeach()
 
 # Install
 install(TARGETS AliceStudio RUNTIME DESTINATION bin)

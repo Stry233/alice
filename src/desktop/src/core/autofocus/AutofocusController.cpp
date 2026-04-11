@@ -98,9 +98,15 @@ void AutofocusController::processDepthData(float depthMeters, float confidence,
 
     if (confidence < confidenceThreshold_) return;
 
-    // Focus point proximity check
-    float dist = std::sqrt((x - focusX_) * (x - focusX_) + (y - focusY_) * (y - focusY_));
-    if (dist > 0.1f) return;
+    // Focus point proximity check for AF-C only. In AF-F the measurement
+    // position is retargeted at the detected face each frame, so the
+    // measured depth is already the face depth and we must not reject it
+    // just because the face isn't near the tapped focus point.
+    if (mode_ == FocusMode::ContinuousAuto) {
+        const float dist = std::sqrt((x - focusX_) * (x - focusX_) +
+                                     (y - focusY_) * (y - focusY_));
+        if (dist > 0.1f) return;
+    }
 
     // Debounce (33ms = ~30Hz)
     if (mode_ == FocusMode::ContinuousAuto || mode_ == FocusMode::FaceTracking) {

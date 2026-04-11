@@ -9,8 +9,8 @@ import Alice.Renderers 1.0
 ApplicationWindow {
     id: root
     visible: true
-    width: 1600; height: 900
-    minimumWidth: 1024; minimumHeight: 600
+    width: 1600; height: 1100
+    minimumWidth: 1024; minimumHeight: 700
     title: "Alice Studio"
 
     Material.theme: Material.Dark
@@ -35,6 +35,30 @@ ApplicationWindow {
 
     // Mode: 0=OPS, 1=CFG
     property int currentMode: 0
+
+    // The depth colormap (~1–5 ms/frame to generate) is only rendered in the
+    // CFG tab's DepthRenderer. Drive the backend gate from mode so OPS-only
+    // users never pay the cost.
+    Binding {
+        target: alice
+        property: "showDepthOverlay"
+        value: root.currentMode === 1
+        when: alice !== null
+    }
+
+    // Mutual-exclusive popover toggle: closing all others before opening target
+    // ensures clicking a different status badge correctly switches popovers.
+    function closeAllPopovers() {
+        motorPopover.visible = false
+        depthPopover.visible = false
+        camPopover.visible = false
+        syncPopover.visible = false
+    }
+    function togglePopover(target) {
+        var wasVisible = target.visible
+        closeAllPopovers()
+        if (!wasVisible) target.visible = true
+    }
 
     // Keyboard shortcuts
     Shortcut { sequence: "Ctrl+1"; onActivated: currentMode = 0 }
@@ -107,25 +131,25 @@ ApplicationWindow {
                         id: motorBadge
                         label: "Motor"; connected: alice ? alice.motorConnected : false
                         deviceName: "nRF52840"
-                        onClicked: motorPopover.toggle()
+                        onClicked: root.togglePopover(motorPopover)
                     }
                     StatusBadge {
                         id: depthBadge
                         label: "Depth"; connected: alice ? alice.realSenseConnected : false
                         deviceName: "RealSense D455"
-                        onClicked: depthPopover.toggle()
+                        onClicked: root.togglePopover(depthPopover)
                     }
                     StatusBadge {
                         id: camBadge
                         label: "Cam"; connected: alice ? alice.captureCardConnected : false
                         deviceName: "Capture Card"
-                        onClicked: camPopover.toggle()
+                        onClicked: root.togglePopover(camPopover)
                     }
                     StatusBadge {
                         id: syncBadge
                         label: "Sync"; connected: alice ? alice.syncClientConnected : false
                         isSync: true
-                        onClicked: syncPopover.toggle()
+                        onClicked: root.togglePopover(syncPopover)
                     }
                 }
             }
@@ -143,27 +167,42 @@ ApplicationWindow {
         }
     }
 
-    // Popovers (use Timer to position after layout)
+    // Popovers (positioned via onVisibleChanged after their badge has laid out)
     BadgePopover {
         id: motorPopover; title: "Motor"
         connected: alice ? alice.motorConnected : false
-        deviceName: "nRF52840"; deviceAddress: "0xFFFF"; uptime: "—"
+        deviceName: "nRF52840"; deviceAddress: "0xFFFF"
+        connectedSinceMs: alice ? alice.motorConnectedSinceMs : 0
+        lastSeenMs: alice ? alice.motorLastDisconnectMs : 0
         y: 48
         onVisibleChanged: if (visible) { var pos = motorBadge.mapToItem(root.contentItem, 0, motorBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); y = pos.y }
+        onRestartClicked: { if (alice) alice.restartMotor() }
+        onDisconnectClicked: { if (alice) { alice.disconnectMotor(); root.closeAllPopovers() } }
+        onReconnectClicked: { if (alice) alice.reconnectMotor() }
     }
     BadgePopover {
         id: depthPopover; title: "Depth"
         connected: alice ? alice.realSenseConnected : false
-        deviceName: "RealSense D455"; deviceAddress: "USB 3.2"; uptime: "—"
+        deviceName: "RealSense D455"; deviceAddress: "USB 3.2"
+        connectedSinceMs: alice ? alice.realSenseConnectedSinceMs : 0
+        lastSeenMs: alice ? alice.realSenseLastDisconnectMs : 0
         y: 48
         onVisibleChanged: if (visible) { var pos = depthBadge.mapToItem(root.contentItem, 0, depthBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); y = pos.y }
+        onRestartClicked: { if (alice) alice.restartDepth() }
+        onDisconnectClicked: { if (alice) { alice.disconnectDepth(); root.closeAllPopovers() } }
+        onReconnectClicked: { if (alice) alice.reconnectDepth() }
     }
     BadgePopover {
         id: camPopover; title: "Camera"
         connected: alice ? alice.captureCardConnected : false
-        deviceName: "Capture Card"; deviceAddress: "UVC"; uptime: "—"
+        deviceName: "Capture Card"; deviceAddress: "UVC"
+        connectedSinceMs: alice ? alice.captureCardConnectedSinceMs : 0
+        lastSeenMs: alice ? alice.captureCardLastDisconnectMs : 0
         y: 48
         onVisibleChanged: if (visible) { var pos = camBadge.mapToItem(root.contentItem, 0, camBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); y = pos.y }
+        onRestartClicked: { if (alice) alice.restartCam() }
+        onDisconnectClicked: { if (alice) { alice.disconnectCam(); root.closeAllPopovers() } }
+        onReconnectClicked: { if (alice) alice.reconnectCam() }
     }
     SyncPopover {
         id: syncPopover
@@ -172,14 +211,20 @@ ApplicationWindow {
     }
 
     // Close popovers on window resize
-    onWidthChanged: { motorPopover.visible = false; depthPopover.visible = false; camPopover.visible = false; syncPopover.visible = false }
-    onHeightChanged: { motorPopover.visible = false; depthPopover.visible = false; camPopover.visible = false; syncPopover.visible = false }
+    onWidthChanged: closeAllPopovers()
+    onHeightChanged: closeAllPopovers()
 
-    // Click-outside handler to close popovers
+    // Click-outside handler — covers only the area BELOW the toolbar so that
+    // clicking another status badge passes through to the badge (otherwise the
+    // MouseArea would swallow the click and the new popover would never open).
     MouseArea {
-        anchors.fill: parent; z: 50
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        height: parent.height - Theme.toolbarHeight - 1
+        z: 50
         visible: motorPopover.visible || depthPopover.visible || camPopover.visible || syncPopover.visible
-        onClicked: { motorPopover.visible = false; depthPopover.visible = false; camPopover.visible = false; syncPopover.visible = false }
+        onClicked: root.closeAllPopovers()
     }
 
     // alice.initialize() is called in the onCompleted above

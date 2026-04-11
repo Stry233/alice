@@ -17,7 +17,6 @@
 #include "core/system/SystemMonitor.h"
 #include "ui/VideoRenderer.h"
 #include "ui/DepthRenderer.h"
-#include "ui/FaceOverlay.h"
 #include "ui/HistogramRenderer.h"
 #include "ui/SplashWindow.h"
 
@@ -159,7 +158,6 @@ int main(int argc, char *argv[])
 
     qmlRegisterType<alice::VideoRenderer>("Alice.Renderers", 1, 0, "VideoRenderer");
     qmlRegisterType<alice::DepthRenderer>("Alice.Renderers", 1, 0, "DepthRenderer");
-    qmlRegisterType<alice::FaceOverlay>("Alice.Renderers", 1, 0, "FaceOverlay");
     qmlRegisterType<alice::HistogramRenderer>("Alice.Renderers", 1, 0, "HistogramRenderer");
 
     splash.showMessage("Preparing engine...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));

@@ -112,14 +112,32 @@ Item {
                                     visible: alice ? alice.realSenseConnected : false
                                 }
 
-                                // Double-stroke reticle
+                                // Face overlay — the detector runs on the RealSense color
+                                // feed, so this is the only place where the bboxes are
+                                // in-register with what the user sees.
+                                FaceOverlay {
+                                    anchors.fill: parent
+                                    vidX: wideDepthRect.vidX
+                                    vidY: wideDepthRect.vidY
+                                    vidW: wideDepthRect.fitW
+                                    vidH: wideDepthRect.fitH
+                                    faces: alice ? alice.trackedFacesList : []
+                                    visible: alice ? (alice.focusMode === 3 && alice.realSenseConnected) : false
+                                    onFaceClicked: (tid) => { if (alice) alice.selectFace(tid) }
+                                }
+
+                                // Double-stroke reticle. Hidden in AF-F mode —
+                                // the face tracker retargets the measurement
+                                // point automatically, so the manual crosshair
+                                // would just fight with it.
                                 Item {
                                     property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
                                     property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
                                     property real cx: wideDepthRect.vidX + normX * wideDepthRect.fitW
                                     property real cy: wideDepthRect.vidY + normY * wideDepthRect.fitH
                                     x: cx - 12; y: cy - 12
-                                    width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+                                    width: 24; height: 24
+                                    visible: alice ? (alice.realSenseConnected && alice.focusMode !== 3) : false
 
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
@@ -130,7 +148,9 @@ Item {
                                 }
 
                                 MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                    anchors.fill: parent
+                                    enabled: alice ? alice.focusMode !== 3 : true  // no manual tap in AF-F
+                                    cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                     property bool isDragging: false
                                     onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
                                     onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
@@ -248,14 +268,6 @@ Item {
                             anchors.centerIn: parent; text: "No camera"; font.pixelSize: Theme.fontSizeH2; color: Theme.textPlaceholder
                             visible: alice ? !alice.captureCardConnected : true
                         }
-
-                        // Face overlay
-                        FaceOverlay {
-                            anchors.fill: parent
-                            faces: alice ? alice.trackedFaces() : []
-                            showCrosshair: false
-                            visible: alice ? alice.focusMode === 3 : false
-                        }
                     }
 
                     // AF status chip (top-left) — matches HTML padding:2px 8px at 200%
@@ -273,13 +285,15 @@ Item {
                         }
                     }
 
-                    // Histogram overlay (top-right)
+                    // Histogram overlay (top-right) — tied strictly to the capture card
+                    // so that disconnecting the camera clears (hides) the histogram
+                    // instead of silently falling back to the RealSense color feed.
                     Rectangle {
                         anchors.top: parent.top; anchors.right: parent.right; anchors.margins: Theme.dp(8)
                         width: Theme.dp(220); height: Theme.dp(130); radius: Theme.radiusSm
                         color: Qt.rgba(0.106, 0.125, 0.145, 0.92)
                         border.width: 1; border.color: Theme.border
-                        visible: histRenderer.source !== null
+                        visible: alice ? alice.captureCardConnected : false
 
                         Text {
                             id: histTitle
@@ -293,7 +307,7 @@ Item {
                             anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                             anchors.top: histTitle.bottom
                             anchors.margins: Theme.dp(6); anchors.topMargin: Theme.dp(4)
-                            source: alice ? (alice.captureCardConnected ? alice.captureFrame : alice.colorFrame) : null
+                            source: (alice && alice.captureCardConnected) ? alice.captureFrame : null
                         }
                     }
 
@@ -504,14 +518,26 @@ Item {
                                 width: stdDepthRect.fitW; height: stdDepthRect.fitH
                                 source: alice ? alice.colorFrame : null; visible: alice ? alice.realSenseConnected : false
                             }
-                            // Crosshair — double-stroke reticle for visibility on any background
+                            // Face overlay (std layout) — same coordinate space as the RealSense preview above.
+                            FaceOverlay {
+                                anchors.fill: parent
+                                vidX: stdDepthRect.vidX
+                                vidY: stdDepthRect.vidY
+                                vidW: stdDepthRect.fitW
+                                vidH: stdDepthRect.fitH
+                                faces: alice ? alice.trackedFacesList : []
+                                visible: alice ? (alice.focusMode === 3 && alice.realSenseConnected) : false
+                                onFaceClicked: (tid) => { if (alice) alice.selectFace(tid) }
+                            }
+                            // Crosshair — hidden in AF-F since face tracking owns the measurement point.
                             Item {
                                 property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
                                 property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
                                 property real cx: stdDepthRect.vidX + normX * stdDepthRect.fitW
                                 property real cy: stdDepthRect.vidY + normY * stdDepthRect.fitH
                                 x: cx - 12; y: cy - 12
-                                width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+                                width: 24; height: 24
+                                visible: alice ? (alice.realSenseConnected && alice.focusMode !== 3) : false
 
                                 // Dark outline (3px wide, behind)
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
@@ -529,9 +555,11 @@ Item {
                                     color: "transparent"; border.width: 1; border.color: "#000000"; opacity: 0.5
                                 }
                             }
-                            // Drag area covers full rect but clamps coords to video region
+                            // Drag area — disabled in AF-F so a stray click doesn't fight the tracker.
                             MouseArea {
-                                anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                anchors.fill: parent
+                                enabled: alice ? alice.focusMode !== 3 : true
+                                cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                 property bool isDragging: false
                                 onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
                                 onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }

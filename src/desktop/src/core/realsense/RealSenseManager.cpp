@@ -1,7 +1,9 @@
 #include "core/realsense/RealSenseManager.h"
 
 #include <librealsense2/rs.hpp>
+#include <QDateTime>
 #include <QElapsedTimer>
+#include <array>
 #include <cmath>
 #include <algorithm>
 #include <numeric>
@@ -78,8 +80,9 @@ void RealSenseManager::stop() {
         captureThread_.detach();
     }
 
-    if (connected_) {
-        connected_ = false;
+    if (connected_.exchange(false)) {
+        lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+        connectedSinceMs_ = 0;
         emit connectionChanged(false);
     }
 }
@@ -184,6 +187,7 @@ void RealSenseManager::captureLoop() {
         impl_->pipeline.start(impl_->config);
         impl_->pipelineStarted = true;
         connected_ = true;
+        connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
         lastInitFailed_ = false;
         emit connectionChanged(true);
 
@@ -231,8 +235,24 @@ void RealSenseManager::captureLoop() {
                     emit depthChanged(depth, confidence_);
                 }
 
+                // Cache the aligned depth frame for on-demand point sampling
+                // (face tracker's per-face depth, eye-level depth, etc.).
+                // This is a memcpy of ~600 KiB per frame — ~0.3 ms on modern
+                // CPUs, well within the capture budget.
+                {
+                    QMutexLocker lock(&depthCacheMutex_);
+                    const size_t sz = static_cast<size_t>(w) * h;
+                    if (depthCache_.size() != sz) depthCache_.resize(sz);
+                    std::memcpy(depthCache_.data(), data, sz * sizeof(uint16_t));
+                    depthCacheW_ = w;
+                    depthCacheH_ = h;
+                }
+
                 // Depth colormap: only generate every 3rd frame (expensive, visual only)
-                if (frameCount % 3 == 0) {
+                // AND only when at least one consumer is subscribed — the OPS view
+                // doesn't bind alice.depthFrame at all, so the colormap is wasted
+                // CPU unless CFG view is open or the sync stream is enabled.
+                if (colormapEnabled_ && frameCount % 3 == 0) {
                     QImage depthImage = colorizeDepth(data, w, h);
                     emit depthFrameReady(depthImage);
                 }
@@ -267,8 +287,9 @@ void RealSenseManager::captureLoop() {
 
     // Signal disconnection and mark not running so health check can restart
     running_ = false;
-    if (connected_) {
-        connected_ = false;
+    if (connected_.exchange(false)) {
+        lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+        connectedSinceMs_ = 0;
         emit connectionChanged(false);
     }
 }
@@ -281,12 +302,54 @@ void RealSenseManager::checkFrameTimeout() {
         // Signal disconnect immediately — no blocking calls here
         frameTimeoutTimer_.stop();
         running_ = false;  // Tells capture thread to exit
-        connected_ = false;
+        if (connected_.exchange(false)) {
+            lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+            connectedSinceMs_ = 0;
+        }
         emit error("RealSense frame timeout — device may be disconnected");
         emit connectionChanged(false);
         // The capture thread holds a shared_ptr to impl_ and will clean up
         // its own pipeline when it eventually unblocks and exits.
     }
+}
+
+float RealSenseManager::depthAt(float nx, float ny) const {
+    QMutexLocker lock(&depthCacheMutex_);
+    if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) return 0.0f;
+
+    const int cx = std::clamp(static_cast<int>(nx * depthCacheW_), 0, depthCacheW_ - 1);
+    const int cy = std::clamp(static_cast<int>(ny * depthCacheH_), 0, depthCacheH_ - 1);
+
+    // 5×5 neighbourhood — take the median of valid mm readings to survive
+    // one or two hole pixels without pulling the estimate off the subject.
+    constexpr int kRadius = 2;
+    const int x0 = std::max(0, cx - kRadius);
+    const int y0 = std::max(0, cy - kRadius);
+    const int x1 = std::min(depthCacheW_ - 1, cx + kRadius);
+    const int y1 = std::min(depthCacheH_ - 1, cy + kRadius);
+
+    uint16_t samples[(2 * kRadius + 1) * (2 * kRadius + 1)];
+    int n = 0;
+    for (int yy = y0; yy <= y1; ++yy) {
+        const uint16_t *row = depthCache_.data() + yy * depthCacheW_;
+        for (int xx = x0; xx <= x1; ++xx) {
+            const uint16_t d = row[xx];
+            if (d >= kMinValidDepth && d <= kMaxValidDepth) {
+                samples[n++] = d;
+            }
+        }
+    }
+    if (n == 0) return 0.0f;
+
+    // Insertion sort — n ≤ 25, branchless-ish.
+    for (int i = 1; i < n; ++i) {
+        uint16_t v = samples[i];
+        int j = i - 1;
+        while (j >= 0 && samples[j] > v) { samples[j + 1] = samples[j]; --j; }
+        samples[j + 1] = v;
+    }
+    const uint16_t median = samples[n / 2];
+    return static_cast<float>(median) / 1000.0f; // mm → m
 }
 
 float RealSenseManager::calculateDepth(const uint16_t *depthData, int width, int height) {
@@ -317,26 +380,43 @@ float RealSenseManager::calculateDepth(const uint16_t *depthData, int width, int
 }
 
 QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int height) {
-    QImage img(width, height, QImage::Format_RGB888);
-
-    for (int y = 0; y < height; ++y) {
-        auto *line = img.scanLine(y);
-        for (int x = 0; x < width; ++x) {
-            uint16_t d = depthData[y * width + x];
+    // Pre-built LUT: depth value (0..65535 mm) → RGB triple. Constructed
+    // lazily on first call and reused for the process lifetime. 192 KiB fits
+    // comfortably in L2, eliminates per-pixel float math and the `d == 0`
+    // branch, and warms the cache after the first few rows.
+    static const std::array<std::array<uint8_t, 3>, 65536> kDepthLut = [] {
+        std::array<std::array<uint8_t, 3>, 65536> lut{};
+        constexpr int kMaxDisplayDepth = 5000; // mm; hot end of the turbo gradient
+        constexpr int kRangeMm = kMaxDisplayDepth - kMinValidDepth;
+        for (int d = 0; d < 65536; ++d) {
             if (d == 0) {
-                line[x * 3 + 0] = 20;
-                line[x * 3 + 1] = 20;
-                line[x * 3 + 2] = 20;
+                lut[d] = {20, 20, 20}; // invalid / no-data → neutral gray
                 continue;
             }
-            // Map 200–5000mm to 0–255 LUT index
-            float normalized = std::clamp(
-                static_cast<float>(d - kMinValidDepth) / (5000.0f - kMinValidDepth),
-                0.0f, 1.0f);
-            int idx = static_cast<int>(normalized * 255);
-            line[x * 3 + 0] = kTurboR[idx];
-            line[x * 3 + 1] = kTurboG[idx];
-            line[x * 3 + 2] = kTurboB[idx];
+            // Integer remap of [kMinValidDepth, kMaxDisplayDepth] → [0, 255]
+            int idx = ((d - kMinValidDepth) * 255) / kRangeMm;
+            idx = std::clamp(idx, 0, 255);
+            lut[d] = {kTurboR[idx], kTurboG[idx], kTurboB[idx]};
+        }
+        return lut;
+    }();
+
+    // Output at half resolution: the colormap is purely a visual preview
+    // (the CFG depth panel scales it to fit), so ¼ the pixels is visually
+    // indistinguishable while spending ¼ of the CPU. The raw depth values
+    // used for the crosshair / autofocus pipeline are untouched.
+    const int outW = width / 2;
+    const int outH = height / 2;
+    QImage img(outW, outH, QImage::Format_RGB888);
+
+    for (int y = 0; y < outH; ++y) {
+        uint8_t *line = img.scanLine(y);
+        const uint16_t *srcRow = depthData + (y * 2) * width;
+        for (int x = 0; x < outW; ++x) {
+            const auto &rgb = kDepthLut[srcRow[x * 2]];
+            line[x * 3 + 0] = rgb[0];
+            line[x * 3 + 1] = rgb[1];
+            line[x * 3 + 2] = rgb[2];
         }
     }
     return img;
