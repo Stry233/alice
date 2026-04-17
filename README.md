@@ -1,89 +1,134 @@
 # Alice
-![alt text](res/banner.png)
+
+![Banner](res/banner.png)
+
 **A**utofocus **L**ens **I**nterface for **C**inema **E**quipment
 
-Alice is an Android app that turns your phone into an external autofocus controller for any camera. It uses the external depth information to measure distance and wirelessly controls a focus motor—no camera firmware integration required.
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-brightgreen)](#hardware-requirements)
+[![Qt](https://img.shields.io/badge/Qt-6.5+-41CD52?logo=qt&logoColor=white)](#alice-studio-desktop)
 
-## When to Use Alice
+Alice turns any camera into an autofocus cinema rig. It pairs a depth sensor with a wireless focus motor to deliver tap-to-focus, continuous autofocus, and real-time face/eye tracking — no camera firmware integration required. Works with any manual or adapted lens.
 
-Use Alice when your camera can’t provide reliable autofocus, or when autofocus isn’t available at all. Typical situations include:
-
-* **Manual-focus lenses** with no built-in AF motor
-* **Adapted lenses** that don’t communicate with the camera body
-* **Linear polarizers** that interfere with phase-detect AF
-* **Cameras with poor or restrictive firmware** that hampers autofocus performance
-- ...
-
-Alice doesn’t rely on your camera’s AF system. It measures distance with its own depth sensor and adjusts focus through a wireless motor, so it can work with virtually any lens once calibrated.
-
+<!-- PLACEHOLDER: res/hero-screenshot.png — side-by-side of Android app and Alice Studio
+     showing a live face-tracking session with matching bounding boxes -->
 
 ## Demo
+
 ![Demo](res/Demo.gif)
-🔗 https://youtu.be/VIDEO_ID
+
+[Full video](https://www.bilibili.com/video/BV1Z3UDBoE55)
+
+## Architecture
+
+Alice is a three-component system:
+
+<!-- PLACEHOLDER: res/architecture-diagram.png — block diagram showing:
+     [Android App] <--WebSocket--> [Alice Studio (Desktop)]
+                                        |
+     [nRF52840 Dongle] <--802.15.4--> [Tilta Motor]
+                                        |
+     [Intel RealSense] --USB--> [Android / Desktop]
+     [Capture Card] --HDMI/USB--> [Android / Desktop]  -->
+
+| Component | Description |
+|:----------|:------------|
+| **Android App** | Mobile control surface. Runs face detection (ONNX YOLO + ML Kit), depth processing, and motor control over USB. Can operate standalone or pair with Alice Studio. |
+| **Alice Studio** | Qt 6 desktop application for Linux, Windows, and macOS. Full-featured monitoring station with live camera preview, depth overlay, autofocus pipeline, calibration tools, and system telemetry. |
+| **Dongle Firmware** | Zephyr RTOS on nRF52840. Bridges USB CDC-ACM serial to IEEE 802.15.4 wireless to control the Tilta motor. |
+
+When both apps are running, they pair over LAN via WebSocket. The desktop streams the camera feed and depth overlay to the phone, and both sides can control the motor and autofocus modes in real time.
+
+## Features
+
+### Autofocus Modes
+
+| Mode | Shortcut | Description |
+|:-----|:---------|:------------|
+| **Manual (MF)** | `M` | Direct motor slider control. Full 0-4095 position range with 5 preset buttons. |
+| **Single (AF-S)** | `S` | Tap to measure depth and focus once. Locks until next tap. |
+| **Continuous (AF-C)** | `C` | Tracks depth at the selected point. Re-focuses automatically as the subject moves. |
+| **Face Tracking (AF-F)** | `F` | YOLO-face detection with per-subject Kalman tracking, eye-priority focus, and hysteresis-based primary selection. Tap a face to pin it. |
+
+### Alice Studio (Desktop)
+
+<!-- PLACEHOLDER: res/studio-screenshot.png — Alice Studio in wide mode showing
+     OPS view with camera feed, depth overlay, face tracking bounding boxes,
+     motor slider, and system telemetry panel -->
+
+- **OPS mode** — live camera feed (zoomable), depth preview with measurement reticle, motor position slider, face/eye tracking overlay, real-time histogram, system telemetry
+- **CFG mode** — lens calibration with interactive graph, resolution and quality settings, LAN sync management, transmission quality sliders
+- **Hardware identity** — status badges show real device names (from USB/RealSense descriptors), uptime, and per-device restart/disconnect/reconnect controls
+- **GPU acceleration** — face detection runs on TensorRT, CUDA, DirectML, or CoreML depending on the platform; CPU fallback runs at 60+ fps on desktop
+- **Cross-platform sync** — QR-code pairing with the Android app over WebSocket; streams camera, depth, and face data bidirectionally with per-stream quality control
+
+### Android App
+
+<!-- PLACEHOLDER: res/android-screenshot.png — Android camera screen showing
+     face tracking overlay and device status indicator -->
+
+- Standalone operation with all four AF modes
+- ONNX YOLO face detection with ML Kit eye landmark refinement
+- Live depth overlay with draggable measurement point
+- Motor discovery and address scanning
+- Calibration recording and JSON export
+- Sync with Alice Studio for remote monitoring
 
 ## Hardware Requirements
 
 | Component | Requirement | Notes |
-| :--- | :--- | :--- |
-| **Phone / Tablet** | Android 8.0+ (API 26) | USB 3.0 recommended. |
-| **Depth Camera** | [Intel RealSense](https://store.realsenseai.com/) | Any of: D415, D435, D435i, D435f, D455, D405. <br>*(Buy used to save money (╯°□°）╯︵ ┻━┻).* |
-| **Focus Motor** | [Tilta Nucleus Nano II](https://tilta.com/shop/nucleus-nano-ii-wireless-lens-control-system) | Hand controller only needed for initial pairing. |
-| **Wireless Bridge**| [nRF52840 USB Dongle](https://www.amazon.com/NRF52840-DONGLE-Micro-Dev-Kit-PCA10059/dp/B0F2J95GDR) | Required for wireless communication. |
-| **Accessories** | USB Hub | To connect peripherals to the phone. |
-
-## Features
-
-**Manual Focus**
-Direct motor control via on-screen slider. Full 0–4095 position range with preset buttons for common distances.
-
-**Single Point Focus (AF-S)**
-Tap anywhere on screen to focus at that point. Focus locks until you tap again—useful for static shots or recomposing after focus.
-
-**Continuous Point Focus (AF-C)**
-Tap to select a point, and Alice continuously tracks depth at that screen position. As the camera moves or subject distance changes, focus adjusts automatically.
-
-**Face Tracking (AF-F)**
-Automatic face detection and tracking. When multiple faces are present, tap to select which one to follow.
+|:----------|:------------|:------|
+| **Phone / Tablet** | Android 8.0+ (API 26) | USB 3.0 recommended for full RGB+depth streaming. |
+| **Desktop** | Linux, Windows, or macOS | Qt 6.5+, C++17 compiler. See [BUILD.md](BUILD.md). |
+| **Depth Camera** | [Intel RealSense](https://store.realsenseai.com/) D415 / D435 / D455 / D405 | Any D4xx series. Used models work fine. |
+| **Focus Motor** | [Tilta Nucleus Nano II](https://tilta.com/shop/nucleus-nano-ii-wireless-lens-control-system) | Hand controller needed only for initial pairing. |
+| **Wireless Bridge** | [nRF52840 USB Dongle](https://www.amazon.com/NRF52840-DONGLE-Micro-Dev-Kit-PCA10059/dp/B0F2J95GDR) | Flashed with Alice firmware. |
+| **Accessories** | USB hub | To connect peripherals to the phone or desktop. |
+| **Capture Card** *(optional)* | Any UVC-class HDMI capture card | For monitoring the camera's HDMI output on Alice Studio. |
 
 ## Quick Start
 
-1. Download the APK and `firmware.hex` from the [Releases](https://github.com/Stry233/Vanta/releases) page
-2. Flash the firmware to your nRF52840 dongle
-3. Install the APK on your phone
-4. Connect your devices and calibrate your lens
+1. **Flash the dongle** — download `firmware.hex` from [Releases](https://github.com/Stry233/Vanta/releases) and flash via nRF Connect Programmer
+2. **Pair the motor** — use the Tilta hand controller to pair on channel 12, then turn the controller off
+3. **Install the app** — install `alice.apk` on your phone, or build Alice Studio from source
+4. **Connect hardware** — plug the dongle, RealSense, and (optionally) a capture card into a USB hub
+5. **Calibrate your lens** — record 3-5 depth/motor points across your focus range, then export
+6. **Shoot** — select AF-S, AF-C, or AF-F and let Alice handle focus
 
-For detailed setup, see [INSTRUCTION.md](INSTRUCTION.md).
+## Documentation
 
-## Building from Source
-
-See [BUILD.md](BUILD.md).
+| Guide | Description |
+|:------|:------------|
+| [Getting Started](docs/getting-started.md) | Hardware setup, firmware flashing, first connection |
+| [Android Guide](docs/android-guide.md) | Android app features and daily usage |
+| [Alice Studio Guide](docs/desktop-guide.md) | Desktop app features, keyboard shortcuts, layout modes |
+| [Sync Setup](docs/sync-guide.md) | Pairing Android and Desktop over LAN |
+| [Calibration](docs/calibration.md) | In-depth calibration workflow and best practices |
+| [Troubleshooting](docs/troubleshooting.md) | Common issues and solutions |
+| [Building from Source](BUILD.md) | Compile instructions for Android, Desktop, and Firmware |
 
 ## USB 2.0 Notes
 
-USB 3.0 is recommended for full functionality. With USB 2.0 (480 Mbps), Alice automatically adapts by disabling the RGB stream from the RealSense and running depth-only mode. Autofocus still works, but you may experience lower frame rates.
+USB 3.0 is recommended. On USB 2.0 (480 Mbps), Alice disables the RGB stream and runs depth-only mode. Autofocus still works, but frame rates may be lower.
 
 ## Limitations
 
-A few things to keep in mind:
-
-- **Depth accuracy varies.** Results depend on your sensor model, lighting conditions, and scene content. Reflective surfaces, glass, and extreme lighting can affect readings.
-
-- **Calibration is required for each lens.** Alice needs to learn the relationship between measured distance and motor position for your specific lens. This takes a few minutes per lens.
-
-- **Non-parfocal lenses require per-focal-length calibration.** If your lens shifts focus when zooming, you'll need separate calibration profiles for each focal length you use.
-
-- **This is a supplementary tool.** For critical cinema work, a skilled AC is still your best option. Alice is designed to fill the gap for solo shooters and low-stakes scenarios.
+- **Depth accuracy varies** with sensor model, lighting, and scene content. Reflective surfaces and extreme lighting degrade readings.
+- **Per-lens calibration required.** Each lens needs its own depth-to-motor mapping. Non-parfocal lenses need separate profiles per focal length.
+- **Supplementary tool.** For critical cinema work, a skilled AC is still your best option. Alice is designed for solo shooters and low-stakes scenarios.
 
 ## Acknowledgements
 
 ### Prior Work
 
-The Tilta motor communication protocol was derived from [strawlab/tilta-n2-control](https://github.com/strawlab/tilta-n2-control), with modifications for Alice's requirements. Some firmware flashing instructions are adapted from their documentation. I appreciate their work in figuring out the protocol.
+The Tilta motor communication protocol was derived from [strawlab/tilta-n2-control](https://github.com/strawlab/tilta-n2-control), with modifications for Alice's requirements. Some firmware flashing instructions are adapted from their documentation.
 
 If you find code that should be attributed but isn't noted in the source, please open an issue.
 
-### AI Assistance & Attribution
+### AI Assistance
 
-**Code:** Parts of the UI were generated with **Claude Sonnet 4.5**, subject to human review and verification.
+Parts of the codebase were developed with assistance from **Claude** (Anthropic). All AI-generated code was reviewed and verified by the maintainer. Individual commits note the model used in the `Co-Authored-By` trailer.
 
-**Media:** The assets in the video demo and repository banner are based on real photography, processed with **Nano Banana Pro** to optimize lighting and backgrounds.
+## License
+
+[MIT](LICENSE)
