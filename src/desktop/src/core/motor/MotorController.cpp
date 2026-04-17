@@ -111,18 +111,6 @@ void MotorController::setPosition(int position) {
 
     int transformed = applyTransform(position);
 
-    // Exponential moving average smoothing
-    if (smoothingEnabled_ && hasPreviousPosition_) {
-        smoothedPosition_ = smoothedPosition_ * (1.0f - kSmoothingAlpha)
-                          + static_cast<float>(transformed) * kSmoothingAlpha;
-        transformed = std::clamp(static_cast<int>(smoothedPosition_),
-                                 MotorProtocol::kMinPosition,
-                                 MotorProtocol::kMaxPosition);
-    } else {
-        smoothedPosition_ = static_cast<float>(transformed);
-        hasPreviousPosition_ = true;
-    }
-
     auto cmd = MotorProtocol::formatPositionCommand(transformed);
     serial_->write(cmd.c_str(), static_cast<qint64>(cmd.size()));
     position_ = transformed;

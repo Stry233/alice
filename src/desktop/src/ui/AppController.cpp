@@ -261,12 +261,10 @@ void AppController::initialize() {
     // Apply settings to motor
     motor_->setOffset(settings_->motorOffset());
     motor_->setReversed(settings_->motorReverse());
-    motor_->setSmoothingEnabled(settings_->smoothingEnabled());
 
     // Apply settings to autofocus
     autofocus_->setConfidenceThreshold(settings_->confidenceThreshold());
-    autofocus_->setSmoothingEnabled(settings_->smoothingEnabled());
-    autofocus_->setResponseSpeed(settings_->responseSpeed());
+    autofocus_->setSmoothingAlpha(settings_->smoothingAlpha());
 
     // Restore saved resolution settings
     realsense_->setStreamConfig(
@@ -415,6 +413,47 @@ void AppController::disconnectCam() {
 void AppController::reconnectCam() {
     log("CAMERA", "Reconnect requested by user");
     coordinator_->reconnectCaptureCard();
+}
+
+// ── Runtime-adjustable settings ─────────────────────────────────────
+
+void AppController::setAfConfidenceThreshold(float v) {
+    autofocus_->setConfidenceThreshold(v);
+    settings_->setConfidenceThreshold(v);
+    broadcastSettings();
+}
+
+void AppController::setAfSmoothingAlpha(float v) {
+    autofocus_->setSmoothingAlpha(v);
+    settings_->setSmoothingAlpha(v);
+    broadcastSettings();
+}
+
+void AppController::setMotorReversed(bool v) {
+    motor_->setReversed(v);
+    settings_->setMotorReverse(v);
+    broadcastSettings();
+}
+
+void AppController::setMotorOffset(int v) {
+    motor_->setOffset(v);
+    settings_->setMotorOffset(v);
+    broadcastSettings();
+}
+
+float AppController::afConfidenceThreshold() const { return settings_->confidenceThreshold(); }
+float AppController::afSmoothingAlpha() const { return settings_->smoothingAlpha(); }
+bool AppController::motorReversed() const { return settings_->motorReverse(); }
+int AppController::motorOffset() const { return settings_->motorOffset(); }
+
+void AppController::broadcastSettings() {
+    if (!syncServer_->hasClient()) return;
+    QJsonObject payload;
+    payload["confidenceThreshold"] = settings_->confidenceThreshold();
+    payload["smoothingAlpha"] = settings_->smoothingAlpha();
+    payload["motorReverse"] = settings_->motorReverse();
+    payload["motorOffset"] = settings_->motorOffset();
+    syncServer_->broadcast(SyncMessage::settingsSync(payload));
 }
 
 // ── Depth ────────────────────────────────────────────────────────────
@@ -988,14 +1027,36 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         break;
     }
     case SyncMessageType::MeasurePosition: {
-        // Remote client is moving the crosshair — apply and let processTap
-        // handle autofocus mode dispatch. Pass the `remote` flag so
-        // setMeasurementPosition does not echo the update back to sender.
         float x = static_cast<float>(message.payload["x"].toDouble());
         float y = static_cast<float>(message.payload["y"].toDouble());
         realsense_->setMeasurementPosition(x, y);
         emit measurePositionChanged();
         autofocus_->processTap(x, y);
+        break;
+    }
+    case SyncMessageType::SettingsSync: {
+        auto p = message.payload;
+        if (p.contains("confidenceThreshold")) {
+            float v = static_cast<float>(p["confidenceThreshold"].toDouble());
+            autofocus_->setConfidenceThreshold(v);
+            settings_->setConfidenceThreshold(v);
+        }
+        if (p.contains("smoothingAlpha")) {
+            float v = static_cast<float>(p["smoothingAlpha"].toDouble());
+            autofocus_->setSmoothingAlpha(v);
+            settings_->setSmoothingAlpha(v);
+        }
+        if (p.contains("motorReverse")) {
+            bool v = p["motorReverse"].toBool();
+            motor_->setReversed(v);
+            settings_->setMotorReverse(v);
+        }
+        if (p.contains("motorOffset")) {
+            int v = p["motorOffset"].toInt();
+            motor_->setOffset(v);
+            settings_->setMotorOffset(v);
+        }
+        log("NETWORK", "Settings synced from remote");
         break;
     }
     default:
@@ -1058,7 +1119,10 @@ void AppController::broadcastModeChange() {
     default: break;
     }
 
-    auto msg = SyncMessage::modeChange(modeStr, autofocus_->isEnabled(), 0.7f, true, 50);
+    auto msg = SyncMessage::modeChange(modeStr, autofocus_->isEnabled(),
+                                       settings_->confidenceThreshold(),
+                                       autofocus_->smoothingAlpha() < 1.0f,
+                                       static_cast<int>(autofocus_->smoothingAlpha() * 100));
     syncServer_->broadcast(msg);
 }
 

@@ -15,6 +15,7 @@ namespace {
         case SyncMessageType::StreamControl:   return "STREAM_CONTROL";
         case SyncMessageType::MeasurePosition: return "MEASURE_POSITION";
         case SyncMessageType::FaceTracking:    return "FACE_TRACKING";
+        case SyncMessageType::SettingsSync:    return "SETTINGS_SYNC";
         }
         return "UNKNOWN";
     }
@@ -29,6 +30,7 @@ namespace {
         if (str == "STREAM_CONTROL")   return SyncMessageType::StreamControl;
         if (str == "MEASURE_POSITION") return SyncMessageType::MeasurePosition;
         if (str == "FACE_TRACKING")    return SyncMessageType::FaceTracking;
+        if (str == "SETTINGS_SYNC")   return SyncMessageType::SettingsSync;
         return SyncMessageType::Heartbeat;
     }
 }
@@ -167,6 +169,14 @@ SyncMessage SyncMessage::faceTracking(const QJsonArray &faces,
         {"frameHeight", frameHeight},
         {"selectedId", selectedId}
     };
+    return msg;
+}
+
+SyncMessage SyncMessage::settingsSync(const QJsonObject &settings) {
+    SyncMessage msg;
+    msg.type = SyncMessageType::SettingsSync;
+    msg.sender = "desktop";
+    msg.payload = settings;
     return msg;
 }
 

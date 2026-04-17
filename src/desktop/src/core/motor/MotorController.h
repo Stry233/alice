@@ -71,9 +71,6 @@ public slots:
     /** Query current status. */
     void queryStatus();
 
-    /** Enable/disable exponential smoothing (alpha=0.2). */
-    void setSmoothingEnabled(bool enabled) { smoothingEnabled_ = enabled; }
-
     /** Set motor position offset (applied before sending). */
     void setOffset(int offset) { offset_ = offset; }
 
@@ -113,12 +110,6 @@ private:
     // Connection lifecycle timestamps (epoch ms; 0 = never)
     std::atomic<qint64> connectedSinceMs_{0};
     std::atomic<qint64> lastDisconnectMs_{0};
-
-    // Smoothing
-    bool smoothingEnabled_ = true;
-    float smoothedPosition_ = 0.0f;
-    bool hasPreviousPosition_ = false;
-    static constexpr float kSmoothingAlpha = 0.2f;
 
     // Transform
     int offset_ = 0;

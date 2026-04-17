@@ -17,8 +17,7 @@ class SettingsManager : public QObject {
     Q_PROPERTY(bool autofocusEnabled READ autofocusEnabled WRITE setAutofocusEnabled NOTIFY autofocusEnabledChanged)
     Q_PROPERTY(QString autofocusMode READ autofocusMode WRITE setAutofocusMode NOTIFY autofocusModeChanged)
     Q_PROPERTY(float confidenceThreshold READ confidenceThreshold WRITE setConfidenceThreshold NOTIFY confidenceThresholdChanged)
-    Q_PROPERTY(bool smoothingEnabled READ smoothingEnabled WRITE setSmoothingEnabled NOTIFY smoothingEnabledChanged)
-    Q_PROPERTY(int responseSpeed READ responseSpeed WRITE setResponseSpeed NOTIFY responseSpeedChanged)
+    Q_PROPERTY(float smoothingAlpha READ smoothingAlpha WRITE setSmoothingAlpha NOTIFY smoothingAlphaChanged)
 
     // Motor
     Q_PROPERTY(int motorSpeed READ motorSpeed WRITE setMotorSpeed NOTIFY motorSpeedChanged)
@@ -44,10 +43,8 @@ public:
     void setAutofocusMode(const QString &v);
     float confidenceThreshold() const;
     void setConfidenceThreshold(float v);
-    bool smoothingEnabled() const;
-    void setSmoothingEnabled(bool v);
-    int responseSpeed() const;
-    void setResponseSpeed(int v);
+    float smoothingAlpha() const;
+    void setSmoothingAlpha(float v);
 
     // Motor
     int motorSpeed() const;
@@ -113,8 +110,7 @@ signals:
     void autofocusEnabledChanged();
     void autofocusModeChanged();
     void confidenceThresholdChanged();
-    void smoothingEnabledChanged();
-    void responseSpeedChanged();
+    void smoothingAlphaChanged();
     void motorSpeedChanged();
     void motorReverseChanged();
     void motorOffsetChanged();

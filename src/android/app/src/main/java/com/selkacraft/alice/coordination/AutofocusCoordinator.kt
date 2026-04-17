@@ -249,8 +249,7 @@ class AutofocusCoordinator(
                 autofocusController.setFocusMode(settings.mode)
                 autofocusController.updateConfiguration(
                     confidenceThreshold = settings.confidence,
-                    enableSmoothing = settings.smoothing,
-                    responseSpeed = settings.speed
+                    smoothingAlpha = if (settings.smoothing) null else 1.0f
                 )
             }
         }

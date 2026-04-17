@@ -283,6 +283,26 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             } catch (_: Exception) {}
                         }
                     }
+                    "SETTINGS_SYNC" -> {
+                        msg.payload["confidenceThreshold"]?.let {
+                            try {
+                                val v = it.toString().toDouble().toFloat()
+                                settingsManager.setAutofocusConfidenceThreshold(v)
+                            } catch (_: Exception) {}
+                        }
+                        msg.payload["smoothingAlpha"]?.let {
+                            try {
+                                val v = it.toString().toDouble().toFloat()
+                                autofocusController.setSmoothingAlpha(v)
+                            } catch (_: Exception) {}
+                        }
+                        msg.payload["motorReverse"]?.let {
+                            try {
+                                settingsManager.setMotorReverseDirection(it.toString().toBoolean())
+                            } catch (_: Exception) {}
+                        }
+                        log(LogCategory.SYSTEM, "Settings synced from desktop", LogLevel.INFO)
+                    }
                     "CALIBRATION_SYNC" -> {
                         val action = msg.payload["action"]?.toString()?.removeSurrounding("\"") ?: ""
                         if (action == "CLEAR") {

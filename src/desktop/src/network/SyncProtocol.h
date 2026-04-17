@@ -22,7 +22,8 @@ enum class SyncMessageType {
     Authenticate,     // Initial handshake with token
     StreamControl,    // Enable/disable video stream channels
     MeasurePosition,  // Measurement crosshair position {x, y} (0..1 normalized)
-    FaceTracking      // Face bounding-box / tracker state broadcast
+    FaceTracking,     // Face bounding-box / tracker state broadcast
+    SettingsSync      // Push AF + motor tuning parameters to the peer
 };
 
 struct SyncMessage {
@@ -53,6 +54,7 @@ struct SyncMessage {
     static SyncMessage faceTracking(const QJsonArray &faces,
                                     int frameWidth, int frameHeight,
                                     int selectedId);
+    static SyncMessage settingsSync(const QJsonObject &settings);
 };
 
 namespace SyncProtocolConstants {

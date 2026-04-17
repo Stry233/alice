@@ -160,6 +160,16 @@ public:
     bool hasMapping() const;
     int targetMotorPosition() const;
 
+    // ── Runtime-adjustable settings (persisted + synced) ────────────
+    Q_INVOKABLE void setAfConfidenceThreshold(float v);
+    Q_INVOKABLE void setAfSmoothingAlpha(float v);
+    Q_INVOKABLE void setMotorReversed(bool v);
+    Q_INVOKABLE void setMotorOffset(int v);
+    Q_INVOKABLE float afConfidenceThreshold() const;
+    Q_INVOKABLE float afSmoothingAlpha() const;
+    Q_INVOKABLE bool motorReversed() const;
+    Q_INVOKABLE int motorOffset() const;
+
     QString mappingName() const;
     Q_INVOKABLE QVariantList mappingPoints() const;
     Q_INVOKABLE void loadMappingFromFile(const QString &path);
@@ -267,6 +277,7 @@ private:
     void broadcastModeChange();
     void broadcastCurrentMapping();
     void broadcastTrackedFaces();
+    void broadcastSettings();
     void updateDepthColormapGate();
 
     // Core components

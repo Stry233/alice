@@ -172,12 +172,8 @@ void AutofocusController::setConfidenceThreshold(float threshold) {
     confidenceThreshold_ = std::clamp(threshold, 0.0f, 1.0f);
 }
 
-void AutofocusController::setSmoothingEnabled(bool enabled) {
-    smoothingEnabled_ = enabled;
-}
-
-void AutofocusController::setResponseSpeed(int speed) {
-    responseSpeed_ = std::clamp(speed, 0, 100);
+void AutofocusController::setSmoothingAlpha(float alpha) {
+    smoothingAlpha_ = std::clamp(alpha, 0.05f, 1.0f);
 }
 
 // ── Private ──────────────────────────────────────────────────────────
@@ -205,10 +201,10 @@ void AutofocusController::calculateAndApplyFocus(float depth) {
 
     int finalPos = *motorPos;
 
-    // Exponential moving average smoothing
-    if (smoothingEnabled_ && lastMotorPosition_.has_value()) {
-        float smoothed = static_cast<float>(*lastMotorPosition_) * (1.0f - kSmoothingAlpha)
-                       + static_cast<float>(finalPos) * kSmoothingAlpha;
+    // Exponential moving average smoothing (alpha < 1.0 enables it)
+    if (smoothingAlpha_ < 1.0f && lastMotorPosition_.has_value()) {
+        float smoothed = static_cast<float>(*lastMotorPosition_) * (1.0f - smoothingAlpha_)
+                       + static_cast<float>(finalPos) * smoothingAlpha_;
         if (std::isfinite(smoothed)) {
             finalPos = std::clamp(static_cast<int>(smoothed), 0, 4095);
         }

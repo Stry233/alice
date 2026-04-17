@@ -7,8 +7,7 @@ namespace keys {
     constexpr auto kAfEnabled    = "autofocus/enabled";
     constexpr auto kAfMode       = "autofocus/mode";
     constexpr auto kAfConfidence = "autofocus/confidenceThreshold";
-    constexpr auto kAfSmoothing  = "autofocus/smoothing";
-    constexpr auto kAfSpeed      = "autofocus/responseSpeed";
+    constexpr auto kAfSmoothingAlpha = "autofocus/smoothingAlpha";
 
     constexpr auto kMotorSpeed     = "motor/speed";
     constexpr auto kMotorReverse   = "motor/reverse";
@@ -60,11 +59,8 @@ void SettingsManager::setAutofocusMode(const QString &v) { settings_.setValue(ke
 float SettingsManager::confidenceThreshold() const { return settings_.value(keys::kAfConfidence, 0.7f).toFloat(); }
 void SettingsManager::setConfidenceThreshold(float v) { settings_.setValue(keys::kAfConfidence, v); emit confidenceThresholdChanged(); }
 
-bool SettingsManager::smoothingEnabled() const { return settings_.value(keys::kAfSmoothing, true).toBool(); }
-void SettingsManager::setSmoothingEnabled(bool v) { settings_.setValue(keys::kAfSmoothing, v); emit smoothingEnabledChanged(); }
-
-int SettingsManager::responseSpeed() const { return settings_.value(keys::kAfSpeed, 50).toInt(); }
-void SettingsManager::setResponseSpeed(int v) { settings_.setValue(keys::kAfSpeed, v); emit responseSpeedChanged(); }
+float SettingsManager::smoothingAlpha() const { return settings_.value(keys::kAfSmoothingAlpha, 0.4f).toFloat(); }
+void SettingsManager::setSmoothingAlpha(float v) { settings_.setValue(keys::kAfSmoothingAlpha, v); emit smoothingAlphaChanged(); }
 
 // ── Motor ────────────────────────────────────────────────────────────
 
@@ -158,8 +154,7 @@ void SettingsManager::setMotorLastPosition(int v) { settings_.setValue(keys::kMo
 void SettingsManager::resetAutofocusSettings() {
     settings_.remove("autofocus");
     emit autofocusEnabledChanged(); emit autofocusModeChanged();
-    emit confidenceThresholdChanged(); emit smoothingEnabledChanged();
-    emit responseSpeedChanged();
+    emit confidenceThresholdChanged(); emit smoothingAlphaChanged();
 }
 
 void SettingsManager::resetMotorSettings() {
