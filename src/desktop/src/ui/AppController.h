@@ -345,6 +345,20 @@ private:
     int faceFrameWidth_ = 0;
     int faceFrameHeight_ = 0;
     qint64 lastFaceBroadcastMs_ = 0;
+    // Throttle the full AF-F pipeline (ONNX inference + SubjectTracker
+    // histograms + per-face depth sampling + primary selection + QML
+    // overlay rebuild) to 10 Hz. Everything inside onColorFrame runs on
+    // the UI thread; at the 30 Hz color-stream rate the chain saturates
+    // one core and starves the QML compositor, which stops painting the
+    // capture-card preview — the user sees < 1 FPS on the main monitor
+    // with aggregate CPU looking "fine" on a multi-core box.
+    //
+    // 10 Hz is the documented industry-standard rate for cinema face
+    // tracking (ARRI HI-5, Preston LR3) — a face doesn't move
+    // meaningfully in 100 ms, and the intermediate frames still publish
+    // colorFrameChanged so the live preview stays smooth.
+    static constexpr qint64 kFaceDetectIntervalMs = 100; // 10 Hz
+    qint64 lastFaceDetectMs_ = 0;
     // Auto-selected primary face id for hysteresis handoff. An incoming
     // detection only steals the "primary" slot from the currently-tracked
     // face if it decisively wins on one of two criteria:

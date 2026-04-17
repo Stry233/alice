@@ -211,8 +211,19 @@ void AutofocusController::calculateAndApplyFocus(float depth) {
     }
 
     lastMotorPosition_ = finalPos;
-    targetPosition_ = finalPos;
     depth_ = depth;
+
+    // Dedup: skip the emit (and downstream serial write / QML rebind /
+    // network broadcast) when the target hasn't actually changed. With
+    // confidence now saturating at 1.0, processDepthData passes on every
+    // frame and calculateAndApplyFocus runs at the 30 Hz debounce rate;
+    // without this check, a perfectly still scene still bombards the
+    // motor with identical commands and pegs the UI thread re-rendering
+    // the same motor number. Cheap int compare, saves a lot downstream.
+    if (targetPosition_.has_value() && *targetPosition_ == finalPos) {
+        return;
+    }
+    targetPosition_ = finalPos;
 
     emit targetPositionChanged(finalPos);
     emit stateChanged();

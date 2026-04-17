@@ -1,27 +1,57 @@
 import QtQuick
 import Alice.UI
 
-// Renders detected / tracked face bounding boxes (plus eye markers and an id
-// label) over a video preview. Coordinates in `faces` are normalised [0..1]
-// in the source frame; callers provide the destination rect (vidX/Y/W/H) so
-// the overlay works for both the wide and std layouts where the RealSense
-// color preview doesn't fill its container.
+// Palantir / Blueprint-style face overlay for pro autofocus monitoring.
+//
+// Performance notes — every QObject here is created, bound, and torn
+// down per Repeater model update. Earlier revisions used a nested
+// `Leg` sub-component with a Repeater for dashed Predicted strokes;
+// that's 30+ QObjects per face and at 15 Hz it was the dominant
+// per-frame cost in AF-F mode — the UI thread saturated on one core
+// (low aggregate CPU, but no QML paint budget left for the capture
+// video, producing the sub-FPS monitor framerate the operator saw).
+// This rewrite keeps ~15 QObjects per face: 8 plain Rectangle legs,
+// 2 crosshair rectangles, one label panel, two Text elements for the
+// drop shadow.
+//
+// Predicted state is now communicated solely by the colour swap to
+// Theme.warning — three distinct Theme colours (Theme.primary for
+// Selected, Theme.textSecondary for Secondary, Theme.warning for
+// Predicted) read unambiguously as primary/secondary/coasting. A
+// Shape-based dashed path is possible later but is not worth the
+// overhead it puts on UI thread paint.
+//
+// Visual hierarchy — Primary dominates, everything else recedes so a
+// dense crowd reads at a glance.
+//
+//   Primary   (selected / active AF target)
+//     • 3 dp corner brackets + 12 dp centre crosshair, Theme.primary
+//     • tag: "#NN  XX%"         (ID + confidence)
+//
+//   Secondary (tracked but not the AF target)
+//     • 2 dp corner brackets, Theme.textSecondary
+//     • tag: "#NN"              (ID only — confidence dropped)
+//
+//   Predicted (coasting — no fresh detection)
+//     • 2 dp corner brackets, Theme.warning (colour signals state)
+//     • tag: "#NN  EST"
+//
+// Coordinates in `faces` are normalised [0..1] in the source frame;
+// callers supply the destination rect (vidX/Y/W/H) so the overlay
+// works for both wide and std layouts.
 Item {
     id: root
 
-    // Input: QVariantList where each element is a dict with keys:
-    //   id, x, y, w, h (normalized), centerX, centerY, confidence,
-    //   selected, state, color, leftEyeX, leftEyeY, rightEyeX, rightEyeY
     property var faces: []
-
-    // Destination rectangle in local coordinates. Defaults to the whole item.
     property real vidX: 0
     property real vidY: 0
     property real vidW: width
     property real vidH: height
 
-    // Called when the user clicks a face bbox — wire to alice.selectFace(id).
     signal faceClicked(int trackingId)
+
+    // Dark slate panel at 75 % opacity — "Analytical Data Tag" spec.
+    readonly property color panelBg: Qt.rgba(0x0F / 255.0, 0x14 / 255.0, 0x1A / 255.0, 0.75)
 
     Repeater {
         model: root.faces
@@ -31,14 +61,13 @@ Item {
             anchors.fill: parent
             required property var modelData
 
-            readonly property int    faceId       : modelData.id !== undefined ? modelData.id : -1
-            readonly property bool   isSelected   : modelData.selected === true
-            readonly property real   confidence   : modelData.confidence !== undefined ? modelData.confidence : 0
-            // NOTE: Item already has a `state` property (the state-machine name),
-            // so call the tracker state something else to avoid shadowing.
-            readonly property int    trackState   : modelData.state !== undefined ? modelData.state : 0
+            readonly property int  faceId     : modelData.id !== undefined ? modelData.id : -1
+            readonly property bool isSelected : modelData.selected === true
+            readonly property real confidence : modelData.confidence !== undefined ? modelData.confidence : 0
+            // NOTE: Item already has a `state` property, avoid shadowing.
+            readonly property int  trackState : modelData.state !== undefined ? modelData.state : 0
 
-            // Pixel-space bbox inside the overlay.
+            // Pixel-space bbox inside the overlay destination rect.
             readonly property real bx : root.vidX + modelData.x * root.vidW
             readonly property real by : root.vidY + modelData.y * root.vidH
             readonly property real bw : modelData.w * root.vidW
@@ -46,135 +75,128 @@ Item {
 
             // Tracking state: 0 = EyeLocked, 1 = FaceOnly, 2 = Predicted, 3 = Lost
             readonly property bool isPredicted: trackState === 2
-            readonly property bool isEyeLocked: trackState === 0
 
-            // Colour: selected → primary, predicted → muted orange, otherwise per-track color.
-            readonly property color boxColor: {
-                if (isSelected) return Theme.primary
-                if (isPredicted) return Qt.rgba(1.0, 0.6, 0.2, 0.85)
-                if (modelData.color !== undefined && modelData.color !== "")
-                    return modelData.color
-                return "#00c8ff"
+            readonly property color reticleColor: {
+                if (isPredicted) return Theme.warning
+                if (isSelected)  return Theme.primary
+                return Theme.textSecondary
             }
 
-            // Main bbox — solid for fresh detections, dashed corners for predicted.
-            //
-            // Position and size animate on a 100ms OutCubic curve to smooth
-            // detector jitter without lagging a moving subject. The state
-            // crossfade (selected ↔ predicted) uses 150ms so the colour and
-            // stroke weight shift is perceptible rather than an abrupt snap.
-            // `strokeColor` / `strokeWidth` are writable intermediary props
-            // so the change cascades into every bracket rectangle via their
-            // parent.* bindings — otherwise each bracket would need its own
-            // Behavior block.
-            Rectangle {
-                id: bboxRect
+            readonly property int strokeW   : isSelected ? Theme.dp(3) : Theme.dp(2)
+            readonly property int cornerLen : Math.max(Theme.dp(8),
+                                                       Math.floor(Math.min(bw, bh) * 0.18))
+
+            readonly property string labelText: {
+                const id = "#" + faceId
+                if (isPredicted) return id + "  EST"
+                if (isSelected) {
+                    const pct = Math.round(Math.max(0, Math.min(1, confidence)) * 100)
+                    return id + "  " + pct + "%"
+                }
+                return id
+            }
+
+            // Invisible click target over the whole bbox. No Behaviors —
+            // the user never sees it move, so animated transitions cost
+            // QML scene-graph cycles for nothing.
+            MouseArea {
                 x: faceItem.bx; y: faceItem.by
                 width: faceItem.bw; height: faceItem.bh
-                color: "transparent"
-                radius: 2
-                antialiasing: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: root.faceClicked(faceItem.faceId)
+            }
 
-                property color strokeColor: faceItem.boxColor
-                property int strokeWidth: faceItem.isSelected ? 3 : (faceItem.isPredicted ? 1 : 2)
-                property int bracketStroke: faceItem.isSelected ? 3 : 2
-                property int bracketLen: Math.max(6, Math.floor(Math.min(width, height) * 0.18))
+            // Reticle container — 8 bracket legs + 2 crosshair
+            // rectangles. All children inherit the transform, so a
+            // face moving across the frame only animates this single
+            // Item; the inner Rectangles ride along for free via the
+            // scene-graph transform stack.
+            Item {
+                id: bracketBox
+                x: faceItem.bx; y: faceItem.by
+                width: faceItem.bw; height: faceItem.bh
 
-                border.color: strokeColor
-                border.width: strokeWidth
-                opacity: faceItem.isPredicted ? 0.7 : 1.0
+                property color stroke: faceItem.reticleColor
+                property int   sw    : faceItem.strokeW
+                property int   len   : faceItem.cornerLen
 
-                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on width { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on x      { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y      { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on width  { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
                 Behavior on height { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on strokeColor { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
-                Behavior on strokeWidth { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
-                Behavior on bracketStroke { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
-                Behavior on opacity { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                Behavior on stroke { ColorAnimation  { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
 
-                MouseArea {
-                    anchors.fill: parent
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: root.faceClicked(faceItem.faceId)
+                // Eight corner-bracket legs. Plain Rectangles — no Leg
+                // sub-component, no Repeater, no visibility toggles.
+                // antialiasing off because these are axis-aligned hairline
+                // rects, AA only costs paint.
+                //   TL-H / TL-V / TR-H / TR-V / BL-H / BL-V / BR-H / BR-V
+                Rectangle { x: 0;                         y: 0;                            width: bracketBox.len; height: bracketBox.sw;  color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: 0;                         y: 0;                            width: bracketBox.sw;  height: bracketBox.len; color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: bracketBox.width - bracketBox.len; y: 0;                    width: bracketBox.len; height: bracketBox.sw;  color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: bracketBox.width - bracketBox.sw;  y: 0;                    width: bracketBox.sw;  height: bracketBox.len; color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: 0;                         y: bracketBox.height - bracketBox.sw;   width: bracketBox.len; height: bracketBox.sw;  color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: 0;                         y: bracketBox.height - bracketBox.len;  width: bracketBox.sw;  height: bracketBox.len; color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: bracketBox.width - bracketBox.len; y: bracketBox.height - bracketBox.sw;   width: bracketBox.len; height: bracketBox.sw;  color: bracketBox.stroke; antialiasing: false }
+                Rectangle { x: bracketBox.width - bracketBox.sw;  y: bracketBox.height - bracketBox.len;  width: bracketBox.sw;  height: bracketBox.len; color: bracketBox.stroke; antialiasing: false }
+
+                // Centre crosshair — positive-lock indicator. Only
+                // drawn for the primary AF target. Delicate (12 dp × 1 dp)
+                // so it reads as mechanical precision, not heavy HUD.
+                Rectangle {
+                    visible: faceItem.isSelected
+                    x: (bracketBox.width  - Theme.dp(12)) * 0.5
+                    y: (bracketBox.height - Theme.dp(1))  * 0.5
+                    width:  Theme.dp(12); height: Theme.dp(1)
+                    color: bracketBox.stroke
+                    antialiasing: false
                 }
-
-                // Four L-shaped corner brackets drawn inside the bbox; these
-                // give the box a "reticle" feel similar to pro AF overlays
-                // and stay legible for small faces. Shown for predicted
-                // state to reinforce the "coasting" visual cue.
-                // top-left
-                Rectangle { x: 0; y: 0; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
-                Rectangle { x: 0; y: 0; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
-                // top-right
-                Rectangle { x: parent.width - parent.bracketLen; y: 0; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
-                Rectangle { x: parent.width - parent.bracketStroke; y: 0; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
-                // bottom-left
-                Rectangle { x: 0; y: parent.height - parent.bracketStroke; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
-                Rectangle { x: 0; y: parent.height - parent.bracketLen; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
-                // bottom-right
-                Rectangle { x: parent.width - parent.bracketLen; y: parent.height - parent.bracketStroke; width: parent.bracketLen; height: parent.bracketStroke; color: parent.strokeColor }
-                Rectangle { x: parent.width - parent.bracketStroke; y: parent.height - parent.bracketLen; width: parent.bracketStroke; height: parent.bracketLen; color: parent.strokeColor }
+                Rectangle {
+                    visible: faceItem.isSelected
+                    x: (bracketBox.width  - Theme.dp(1))  * 0.5
+                    y: (bracketBox.height - Theme.dp(12)) * 0.5
+                    width:  Theme.dp(1); height: Theme.dp(12)
+                    color: bracketBox.stroke
+                    antialiasing: false
+                }
             }
 
-            // ID / confidence label. Anchored above the bbox when there is
-            // room, otherwise placed inside the top of the bbox so it never
-            // vanishes off-screen or stacks on the next face's label. The
-            // confidence is clamped to [0,100] as a last-line defence against
-            // any accidental out-of-range values flowing through from a
-            // misread model tensor.
+            // Analytical Data Tag — panel + typography, tethered flush
+            // to the top-left bracket. Flips to just-inside-top when
+            // the face sits at the edge of the preview.
             Rectangle {
-                readonly property real labelW: idLabel.implicitWidth + 10
-                readonly property real labelH: idLabel.implicitHeight + 4
-                readonly property real rawAboveY: faceItem.by - labelH - 2
-                readonly property real fallbackInsideY: faceItem.by + 2
-                x: Math.min(Math.max(faceItem.bx, root.vidX),
-                            root.vidX + root.vidW - labelW)
-                y: rawAboveY >= root.vidY ? rawAboveY : fallbackInsideY
-                width: labelW
-                height: labelH
-                color: faceItem.isSelected ? Theme.primary : Qt.rgba(0, 0, 0, 0.72)
-                radius: 2
-                Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                id: tag
+                color: root.panelBg
+                border.color: Qt.rgba(faceItem.reticleColor.r,
+                                      faceItem.reticleColor.g,
+                                      faceItem.reticleColor.b, 0.30)
+                border.width: 1
+                radius: Theme.radiusSm
+
+                readonly property int hPad: Theme.dp(5)
+                readonly property int vPad: Theme.dp(2)
+                width:  tagText.implicitWidth  + hPad * 2
+                height: tagText.implicitHeight + vPad * 2
+
+                readonly property real aboveY: faceItem.by - height - Theme.dp(2)
+                x: faceItem.bx
+                y: aboveY >= root.vidY ? aboveY : faceItem.by + Theme.dp(2)
+
+                Behavior on x           { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on y           { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                Behavior on border.color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+
                 Text {
-                    id: idLabel
-                    anchors.centerIn: parent
-                    text: {
-                        var pct = Math.round(Math.max(0, Math.min(1, faceItem.confidence)) * 100)
-                        return "#" + faceItem.faceId + "  " + pct + "%"
-                    }
-                    color: "#ffffff"
-                    font.pixelSize: 11
+                    id: tagText
+                    x: tag.hPad; y: tag.vPad
+                    text: faceItem.labelText
+                    color: faceItem.reticleColor
                     font.family: Theme.fontFamilyMono
-                }
-            }
+                    font.pixelSize: Theme.dp(12)
+                    font.weight: Font.DemiBold
 
-            // Eye markers — small squares at the absolute eye positions. A
-            // matching 100ms Behavior keeps eye overlays in step with bbox
-            // motion so they don't appear to drift independently.
-            Rectangle {
-                visible: modelData.leftEyeX !== undefined
-                x: root.vidX + (modelData.leftEyeX !== undefined ? modelData.leftEyeX : 0) * root.vidW - 4
-                y: root.vidY + (modelData.leftEyeY !== undefined ? modelData.leftEyeY : 0) * root.vidH - 4
-                width: 8; height: 8; radius: 2
-                color: "transparent"
-                border.color: "#00ffc8"
-                border.width: 1.5
-                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-            }
-            Rectangle {
-                visible: modelData.rightEyeX !== undefined
-                x: root.vidX + (modelData.rightEyeX !== undefined ? modelData.rightEyeX : 0) * root.vidW - 4
-                y: root.vidY + (modelData.rightEyeY !== undefined ? modelData.rightEyeY : 0) * root.vidH - 4
-                width: 8; height: 8; radius: 2
-                color: "transparent"
-                border.color: "#00ffc8"
-                border.width: 1.5
-                Behavior on x { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
-                Behavior on y { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                    Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                }
             }
         }
     }

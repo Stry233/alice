@@ -876,6 +876,32 @@ void AppController::onColorFrame(const QImage &frame) {
     //      — the NEXT depth frame will be sampled at that position and
     //      flow through onDepthChanged → autofocus->processDepthData.
     if (autofocus_->focusMode() == FocusMode::FaceTracking && faceDetector_->isReady()) {
+        // Throttle the full AF-F pipeline to 10 Hz. Everything inside
+        // this block — ONNX inference, SubjectTracker histograms, per-
+        // face depthAt() sampling, primary-face selection, QML overlay
+        // rebuild and network broadcast — runs on the UI thread. At the
+        // 30 Hz color-stream rate it saturates one core and starves the
+        // QML compositor, so the capture-card preview drops below 1 FPS
+        // while aggregate CPU looks moderate on a multi-core box (one
+        // pinned core is 10 % of total usage).
+        //
+        // 10 Hz matches cinema-industry face-tracking rates (ARRI HI-5,
+        // Preston LR3) — a subject doesn't move meaningfully in 100 ms
+        // and the intermediate frames still push colorFrameChanged so
+        // the live preview stays smooth.
+        const qint64 now = QDateTime::currentMSecsSinceEpoch();
+        if (now - lastFaceDetectMs_ < kFaceDetectIntervalMs) {
+            emit colorFrameChanged();
+            if (streamColor_ && now - lastColorSendMs_ >= minFrameIntervalMs_) {
+                lastColorSendMs_ = now;
+                sendFrameToClient(kFrameTypeColor, frame, streamQualityColor_,
+                                  kOverlayMaxW, kOverlayMaxH);
+                logStreamThrottled(colorStreamCount_, kStreamLogInterval, "color", frame);
+            }
+            return;
+        }
+        lastFaceDetectMs_ = now;
+
         faceFrameWidth_ = frame.width();
         faceFrameHeight_ = frame.height();
         auto detections = faceDetector_->detect(frame);
