@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <QDateTime>
 #include <QFileInfo>
+#include <QVariantMap>
 
 namespace alice {
 
@@ -17,21 +18,50 @@ MotorController::~MotorController() {
     disconnectDevice();
 }
 
+// Does this serial port look like an Alice motor dongle? We trust the
+// VID:PID first and fall back to CDC-ACM heuristics so the same logic
+// works across vendors of the nRF52840 reference board.
+static bool looksLikeMotorDongle(const QSerialPortInfo &info) {
+    if (info.vendorIdentifier() == MotorController::kVendorId &&
+        info.productIdentifier() == MotorController::kProductId) {
+        return true;
+    }
+    return info.description().contains("nRF", Qt::CaseInsensitive)
+        || info.description().contains("CDC", Qt::CaseInsensitive)
+        || info.portName().contains("ttyACM");
+}
+
 void MotorController::connectDevice() {
     if (connected_) return;
 
     QSet<QString> attempted;
+    const auto ports = QSerialPortInfo::availablePorts();
 
-    // Scan for the nRF52840 dongle by VID/PID (preferred)
-    for (const auto &info : QSerialPortInfo::availablePorts()) {
+    // 1. Honour the user's preferred port first — that's the whole point
+    //    of the selection dropdown. If it's present but can't be opened
+    //    (busy, permission denied) we fall through to auto-pick so the
+    //    app still comes up on *some* dongle rather than sitting idle.
+    if (!preferredPortName_.isEmpty()) {
+        for (const auto &info : ports) {
+            if (info.portName() == preferredPortName_) {
+                attempted.insert(info.portName());
+                if (openPort(info)) return;
+                break;
+            }
+        }
+    }
+
+    // 2. Known VID:PID match — the normal "just plug it in" path.
+    for (const auto &info : ports) {
+        if (attempted.contains(info.portName())) continue;
         if (info.vendorIdentifier() == kVendorId && info.productIdentifier() == kProductId) {
             attempted.insert(info.portName());
             if (openPort(info)) return;
         }
     }
 
-    // Fallback: look for CDC-ACM ports not already tried
-    for (const auto &info : QSerialPortInfo::availablePorts()) {
+    // 3. CDC-ACM heuristic — catches unknown reference boards.
+    for (const auto &info : ports) {
         if (attempted.contains(info.portName())) continue;
         if (info.description().contains("nRF", Qt::CaseInsensitive) ||
             info.description().contains("CDC", Qt::CaseInsensitive) ||
@@ -45,6 +75,41 @@ void MotorController::connectDevice() {
         lastScanFailed_ = true;
     }
     reconnectTimer_.start();
+}
+
+QVariantList MotorController::availableDevices() const {
+    QVariantList out;
+    for (const auto &info : QSerialPortInfo::availablePorts()) {
+        if (!looksLikeMotorDongle(info)) continue;
+
+        QVariantMap m;
+        m["id"]     = info.portName();
+        // Description is often generic ("nRF52 Connect SDK USB CDC ACM
+        // sample") — append the port so multiple identical dongles are
+        // distinguishable at a glance in the UI list.
+        const QString desc = info.description().isEmpty()
+                             ? QStringLiteral("Serial device")
+                             : info.description();
+        m["name"]   = QString("%1 (%2)").arg(desc, info.portName());
+        m["active"] = connected_.load() && info.portName() == activePortName_;
+        out.append(m);
+    }
+    return out;
+}
+
+void MotorController::selectDevice(const QString &portName) {
+    if (preferredPortName_ == portName) return;
+    preferredPortName_ = portName;
+
+    // If we're already on the preferred port, nothing to do. Otherwise
+    // close the current one so the next connectDevice() (either ours via
+    // reconnectTimer_ or a caller-driven one) picks it up.
+    const bool wantSwitch = !portName.isEmpty() && connected_ && devicePortName_ != portName;
+    if (wantSwitch) {
+        disconnectDevice();
+        connectDevice();
+    }
+    emit availableDevicesChanged();
 }
 
 void MotorController::disconnectDevice() {
@@ -61,6 +126,7 @@ void MotorController::disconnectDevice() {
     // Deliberately keep deviceDescription_ populated so the popover can
     // still show "last seen as …" until a new device is plugged in.
     emit connectionChanged(false);
+    emit availableDevicesChanged();
 }
 
 bool MotorController::openPort(const QSerialPortInfo &portInfo) {
@@ -101,8 +167,10 @@ bool MotorController::openPort(const QSerialPortInfo &portInfo) {
     if (deviceDescription_.isEmpty())
         deviceDescription_ = portInfo.portName();
     devicePortName_ = portInfo.systemLocation();
+    activePortName_ = portInfo.portName();
 
     emit connectionChanged(true);
+    emit availableDevicesChanged();
     return true;
 }
 

@@ -5,6 +5,7 @@
 #include <QSerialPortInfo>
 #include <QTimer>
 #include <QString>
+#include <QVariantList>
 #include <memory>
 #include <atomic>
 
@@ -46,6 +47,33 @@ public:
     /** Short bus identifier (e.g. "/dev/ttyACM0") of the active port, if any. */
     QString devicePortName() const { return devicePortName_; }
 
+    /**
+     * Enumerate candidate motor-dongle serial ports currently visible to
+     * the OS. Each entry is a QVariantMap with:
+     *   "id"     — QString, stable portName (e.g. "ttyACM0", "COM3"),
+     *              used as the selection key
+     *   "name"   — QString, human-readable (description + port)
+     *   "active" — bool, true if this entry is the currently-connected dongle
+     *
+     * Only ports that look like Alice dongles are included — matching
+     * VID:PID first, then falling back to CDC-ACM heuristics. Ports that
+     * definitely aren't ours (Bluetooth modems, random serial cables)
+     * are filtered out so the selection dropdown stays on-topic.
+     */
+    Q_INVOKABLE QVariantList availableDevices() const;
+
+    /**
+     * Persist a preferred port-name. On the next discovery tick the
+     * coordinator will auto-switch to it if present. If nothing's
+     * connected yet, the preference is consulted on the next
+     * connectDevice(). Pass an empty string to clear the preference
+     * (revert to auto-pick).
+     */
+    Q_INVOKABLE void selectDevice(const QString &portName);
+
+    /** Read the currently-stored preference; empty if auto-pick. */
+    QString preferredDeviceId() const { return preferredPortName_; }
+
 public slots:
     /** Discover and connect to the motor dongle. */
     void connectDevice();
@@ -84,6 +112,12 @@ signals:
     void responseReceived(const QString &response);
     void error(const QString &message);
     void ready();
+    /**
+     * Emitted when either the enumeration of candidate dongles changes
+     * (plug / unplug) or the active one changes. UI re-reads
+     * availableDevices() and refreshes the selection dropdown.
+     */
+    void availableDevicesChanged();
 
 private slots:
     void onReadyRead();
@@ -105,7 +139,19 @@ private:
     // Populated when openPort succeeds; cleared on disconnect. Used by the
     // UI to show the actual detected device name in the Motor popover.
     QString deviceDescription_;
+    // Full system location (e.g. "/dev/ttyACM0", "\\\\.\\COM3") — surfaced
+    // as the popover's "Address" field.
     QString devicePortName_;
+    // Short port name (e.g. "ttyACM0", "COM3") — matches what
+    // QSerialPortInfo::portName() returns, used as the list id so the
+    // "active" flag in availableDevices() stays consistent with
+    // selectDevice(id) calls.
+    QString activePortName_;
+
+    // User-selected preferred port. On discovery, we try this first; when
+    // empty we fall back to VID:PID scan + CDC-ACM heuristic. Persisted
+    // via SettingsManager and restored at startup by AppController.
+    QString preferredPortName_;
 
     // Connection lifecycle timestamps (epoch ms; 0 = never)
     std::atomic<qint64> connectedSinceMs_{0};

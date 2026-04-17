@@ -21,6 +21,19 @@ Rectangle {
     signal reconnectClicked()
     signal disconnectClicked()
     signal restartClicked()
+    /**
+     * Fired when the user picks a different device from the selection
+     * list below. Parent routes this to alice.selectMotorDevice(id) etc.
+     */
+    signal deviceSelected(string deviceId)
+
+    /**
+     * Enumerated candidates for this device type. Each element is a
+     * {id, name, active} map. The dropdown only renders when the list
+     * has ≥ 2 entries — for a single-device setup (the common case)
+     * the popover keeps its original slim layout.
+     */
+    property var deviceList: []
 
     // Origin-slide presentation. Parent sets `anchorY` to the final resting
     // position (just below the badge) and toggles `active` to show/hide.
@@ -150,6 +163,84 @@ Rectangle {
 
             Text { visible: connected; text: "Uptime"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeMicro; font.family: Theme.fontFamily }
             Text { visible: connected; text: popover.uptimeText; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeMicro }
+        }
+
+        // Device selector — only surfaced when ≥ 2 candidates of this
+        // type are present. Renders a compact radio-list so the user
+        // can pick which motor / RealSense / capture card is active.
+        // Active entry highlighted in Theme.primary so the current
+        // selection is unambiguous.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Theme.dp(6)
+            visible: popover.deviceList !== undefined && popover.deviceList.length >= 2
+
+            Text {
+                text: "Active device"
+                color: Theme.textSecondary
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeMicro
+                font.weight: Font.DemiBold
+                font.letterSpacing: Theme.sectionLetterSpacing
+            }
+
+            Repeater {
+                model: popover.deviceList
+                delegate: Rectangle {
+                    required property var modelData
+                    Layout.fillWidth: true
+                    height: Theme.dp(30)
+                    radius: Theme.radiusSm
+                    readonly property bool isActive: modelData && modelData.active === true
+                    color: isActive ? Theme.primaryMuted
+                         : (devMa.containsMouse ? Theme.surfaceHover : Theme.elevated)
+                    border.width: 1
+                    border.color: isActive ? Theme.primary
+                                : (devMa.containsMouse ? Theme.borderStrong : Theme.border)
+                    Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                    Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+
+                    Row {
+                        anchors.left: parent.left
+                        anchors.leftMargin: Theme.dp(10)
+                        anchors.right: parent.right
+                        anchors.rightMargin: Theme.dp(10)
+                        anchors.verticalCenter: parent.verticalCenter
+                        spacing: Theme.dp(8)
+
+                        // Radio dot — filled for the active device.
+                        Rectangle {
+                            width: Theme.dp(10); height: Theme.dp(10)
+                            radius: Theme.dp(5)
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: parent.parent.isActive ? Theme.primary : "transparent"
+                            border.width: 1
+                            border.color: parent.parent.isActive ? Theme.primary : Theme.textDisabled
+                        }
+
+                        Text {
+                            text: modelData ? modelData.name : ""
+                            color: parent.parent.isActive ? Theme.primaryHover : Theme.textPrimary
+                            font.family: Theme.fontFamilyMono
+                            font.pixelSize: Theme.fontSizeMicro
+                            anchors.verticalCenter: parent.verticalCenter
+                            elide: Text.ElideMiddle
+                            width: parent.width - Theme.dp(18)
+                        }
+                    }
+
+                    MouseArea {
+                        id: devMa
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: {
+                            if (!modelData || modelData.active === true) return
+                            popover.deviceSelected(modelData.id)
+                        }
+                    }
+                }
+            }
         }
 
         // Buttons (connected)

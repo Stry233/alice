@@ -37,18 +37,41 @@ ApplicationWindow {
 
     color: Theme.bg
 
-    // Compute DPI-based scale factor at startup.
-    // Base design is for 96 DPI. Screen.pixelDensity is in px/mm.
-    // 96 DPI = 96/25.4 = 3.78 px/mm.
+    // Compute DPI-based scale factor at startup. Base design is for 96 DPI
+    // with 2x HTML CSS values — Qt already handles DPI scaling natively.
+    // The user's Ctrl+Plus / Ctrl+Minus adjustment is layered on top via
+    // Theme.scaleFactor so the two effects compose cleanly.
     Component.onCompleted: {
-        // Qt handles DPI scaling automatically. Our base values are 2x HTML CSS
-        // (matching the 200% demo). No additional scaling needed.
-        Theme.scaleFactor = 1.0
+        // Restore the user's saved UI zoom level. SettingsManager clamps
+        // to [0.6, 2.0] so a corrupt settings file can't wreck the UI.
+        Theme.scaleFactor = alice ? alice.uiScaleFactor() : 1.0
         console.log("[Alice] Screen:", Screen.width + "x" + Screen.height,
-                    "DPR:", Screen.devicePixelRatio)
+                    "DPR:", Screen.devicePixelRatio,
+                    "uiScale:", Theme.scaleFactor.toFixed(2))
 
         if (alice) alice.initialize()
     }
+
+    // ── UI zoom (VSCode-style Ctrl+Plus / Ctrl+Minus / Ctrl+0) ─────────
+    // Mutates Theme.scaleFactor — every binding that calls Theme.dp()
+    // automatically re-evaluates because QML's property-binding tracker
+    // picks up the scaleFactor read inside dp(). No per-component work.
+    // Persisted on each keystroke via alice.setUiScaleFactor() so the
+    // user's choice survives restarts without waiting for shutdown.
+    readonly property real uiScaleMin: 0.6
+    readonly property real uiScaleMax: 2.0
+    readonly property real uiScaleStep: 0.1
+    function applyUiScale(v) {
+        var clamped = Math.max(uiScaleMin, Math.min(uiScaleMax, v))
+        Theme.scaleFactor = Math.round(clamped * 100) / 100   // trim FP drift
+        if (alice) alice.setUiScaleFactor(Theme.scaleFactor)
+    }
+    // Qt parses "Ctrl++" as Ctrl + the `+` key; on US layouts the `+` key
+    // is physically Shift+=, which VSCode users habitually press. Bind
+    // both `Ctrl++` and `Ctrl+=` so either reads as "zoom in".
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="];  onActivated: root.applyUiScale(Theme.scaleFactor + root.uiScaleStep) }
+    Shortcut { sequence:  "Ctrl+-";              onActivated: root.applyUiScale(Theme.scaleFactor - root.uiScaleStep) }
+    Shortcut { sequence:  "Ctrl+0";              onActivated: root.applyUiScale(1.0) }
 
     // Mode: 0=OPS, 1=CFG
     property int currentMode: 0
@@ -95,7 +118,12 @@ ApplicationWindow {
 
         // Toolbar
         Rectangle {
-            Layout.fillWidth: true; height: Theme.toolbarHeight; color: Theme.elevated
+            // Layout.preferredHeight rather than just `height:` so the
+            // enclosing ColumnLayout re-allocates vertical space when
+            // Theme.toolbarHeight changes (e.g. user presses Ctrl+Plus).
+            Layout.fillWidth: true
+            Layout.preferredHeight: Theme.toolbarHeight
+            color: Theme.elevated
 
             RowLayout {
                 anchors.fill: parent
@@ -204,11 +232,13 @@ ApplicationWindow {
         deviceAddress: alice ? alice.motorDeviceAddress : ""
         connectedSinceMs: alice ? alice.motorConnectedSinceMs : 0
         lastSeenMs: alice ? alice.motorLastDisconnectMs : 0
+        deviceList: alice ? alice.motorDevices : []
         anchorY: Theme.toolbarHeight
         onActiveChanged: if (active) { var pos = motorBadge.mapToItem(root.contentItem, 0, motorBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); anchorY = pos.y }
         onRestartClicked: { if (alice) alice.restartMotor() }
         onDisconnectClicked: { if (alice) { alice.disconnectMotor(); root.closeAllPopovers() } }
         onReconnectClicked: { if (alice) alice.reconnectMotor() }
+        onDeviceSelected: (deviceId) => { if (alice) alice.selectMotorDevice(deviceId) }
     }
     BadgePopover {
         id: depthPopover; title: "Depth"
@@ -217,11 +247,13 @@ ApplicationWindow {
         deviceAddress: alice ? alice.realSenseDeviceAddress : ""
         connectedSinceMs: alice ? alice.realSenseConnectedSinceMs : 0
         lastSeenMs: alice ? alice.realSenseLastDisconnectMs : 0
+        deviceList: alice ? alice.realSenseDevices : []
         anchorY: Theme.toolbarHeight
         onActiveChanged: if (active) { var pos = depthBadge.mapToItem(root.contentItem, 0, depthBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); anchorY = pos.y }
         onRestartClicked: { if (alice) alice.restartDepth() }
         onDisconnectClicked: { if (alice) { alice.disconnectDepth(); root.closeAllPopovers() } }
         onReconnectClicked: { if (alice) alice.reconnectDepth() }
+        onDeviceSelected: (deviceId) => { if (alice) alice.selectRealSenseDevice(deviceId) }
     }
     BadgePopover {
         id: camPopover; title: "Camera"
@@ -230,11 +262,13 @@ ApplicationWindow {
         deviceAddress: alice ? alice.captureCardDeviceAddress : ""
         connectedSinceMs: alice ? alice.captureCardConnectedSinceMs : 0
         lastSeenMs: alice ? alice.captureCardLastDisconnectMs : 0
+        deviceList: alice ? alice.captureCardDevices : []
         anchorY: Theme.toolbarHeight
         onActiveChanged: if (active) { var pos = camBadge.mapToItem(root.contentItem, 0, camBadge.height + 4); x = Math.max(0, Math.min(pos.x, root.width - width)); anchorY = pos.y }
         onRestartClicked: { if (alice) alice.restartCam() }
         onDisconnectClicked: { if (alice) { alice.disconnectCam(); root.closeAllPopovers() } }
         onReconnectClicked: { if (alice) alice.reconnectCam() }
+        onDeviceSelected: (deviceId) => { if (alice) alice.selectCaptureCardDevice(deviceId) }
     }
     SyncPopover {
         id: syncPopover

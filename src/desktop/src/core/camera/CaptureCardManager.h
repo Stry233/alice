@@ -36,9 +36,30 @@ public:
     /** Human-readable name of the currently-selected capture device. */
     QString deviceDescription() const { return deviceDescription_; }
 
-    Q_INVOKABLE QStringList availableDevices() const;
+    /**
+     * Enumerate video-input devices the OS sees, minus anything that
+     * looks like a RealSense RGB stream (those are managed separately).
+     * Each entry is a QVariantMap with:
+     *   "id"     — QString, stable QCameraDevice::id() (works across
+     *              replug on the same host)
+     *   "name"   — QString, human-readable description
+     *   "active" — bool, true if this entry is the live capture source
+     *
+     * Kept as Q_INVOKABLE so QML can bind to it for the device selector
+     * in the badge popover.
+     */
+    Q_INVOKABLE QVariantList availableDevices() const;
     Q_INVOKABLE QVariantList availableFormats() const;
     void setCameraResolution(int width, int height, int fps);
+
+    /**
+     * Persist a preferred capture-device id (QCameraDevice::id()). On
+     * the next discovery tick the coordinator will auto-switch to it if
+     * present; if it vanishes we fall back to the first non-RealSense
+     * input. Pass an empty string to clear the preference.
+     */
+    Q_INVOKABLE void selectDevice(const QString &id);
+    QString preferredDeviceId() const { return preferredDeviceId_; }
 
 public slots:
     void start();
@@ -49,6 +70,8 @@ signals:
     void connectionChanged(bool connected);
     void frameReady(const QImage &frame);
     void error(const QString &message);
+    /** Enumeration or active-device changed — UI re-reads the list. */
+    void availableDevicesChanged();
 
 private slots:
     void onFrameChanged();
@@ -67,8 +90,15 @@ private:
     qint64 connectedSinceMs_ = 0;
     qint64 lastDisconnectMs_ = 0;
 
-    // Cached device description shown in the UI popover.
+    // Cached device description + stable id of the currently-open
+    // capture source — used for the popover and for the "active" flag
+    // in availableDevices().
     QString deviceDescription_;
+    QString activeDeviceId_;
+
+    // User preferred QCameraDevice::id(). Preferred over auto-pick when
+    // present; persisted via SettingsManager.
+    QString preferredDeviceId_;
 
     // Configurable resolution (0 = use device default)
     int requestedWidth_ = 0;

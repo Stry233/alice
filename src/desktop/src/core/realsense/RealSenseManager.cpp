@@ -117,8 +117,59 @@ void RealSenseManager::stop() {
     if (connected_.exchange(false)) {
         lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
         connectedSinceMs_ = 0;
+        {
+            QMutexLocker lock(&deviceInfoMutex_);
+            activeSerial_.clear();
+        }
         emit connectionChanged(false);
+        emit availableDevicesChanged();
     }
+}
+
+QVariantList RealSenseManager::availableDevices() const {
+    QVariantList out;
+    QString activeCopy;
+    {
+        QMutexLocker lock(&deviceInfoMutex_);
+        activeCopy = activeSerial_;
+    }
+    try {
+        rs2::context ctx;
+        auto devs = ctx.query_devices();
+        for (uint32_t i = 0; i < devs.size(); ++i) {
+            const auto &d = devs[i];
+            if (!d.supports(RS2_CAMERA_INFO_SERIAL_NUMBER)) continue;
+            const QString serial = QString::fromUtf8(d.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+            QString name = "Intel RealSense";
+            if (d.supports(RS2_CAMERA_INFO_NAME))
+                name = QString::fromUtf8(d.get_info(RS2_CAMERA_INFO_NAME));
+            QVariantMap m;
+            m["id"]     = serial;
+            m["name"]   = QString("%1 (%2)").arg(name, serial);
+            m["active"] = connected_.load() && serial == activeCopy;
+            out.append(m);
+        }
+    } catch (...) {
+        // librealsense throws on context init for missing udev permissions
+        // or detached USB. Return whatever we've enumerated so far —
+        // typically an empty list, which the UI renders as "no selector
+        // shown" rather than a broken dropdown.
+    }
+    return out;
+}
+
+void RealSenseManager::selectDevice(const QString &serial) {
+    if (preferredSerial_ == serial) return;
+    preferredSerial_ = serial;
+
+    // Restart the pipeline so the new enable_device binding takes effect.
+    // Only restart if we'd actually switch — empty serial on an unconnected
+    // manager is a no-op.
+    if (!serial.isEmpty() && activeSerial_ != serial && running_) {
+        stop();
+        start();
+    }
+    emit availableDevicesChanged();
 }
 
 QVariantList RealSenseManager::availableDepthModes() const {
@@ -212,6 +263,29 @@ void RealSenseManager::setStreamConfig(int dw, int dh, int df, int cw, int ch, i
 
 void RealSenseManager::captureLoop() {
     try {
+        // Bind to the user's preferred camera by serial when present —
+        // librealsense picks the first attached device by default, which
+        // is non-deterministic with multiple cameras plugged in. If the
+        // preferred serial isn't currently present we fall through to
+        // the auto-pick so the app still comes up on *some* camera.
+        if (!preferredSerial_.isEmpty()) {
+            try {
+                rs2::context ctx;
+                auto devs = ctx.query_devices();
+                for (uint32_t i = 0; i < devs.size(); ++i) {
+                    const auto &d = devs[i];
+                    if (d.supports(RS2_CAMERA_INFO_SERIAL_NUMBER)) {
+                        const QString s = QString::fromUtf8(
+                            d.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+                        if (s == preferredSerial_) {
+                            impl_->config.enable_device(preferredSerial_.toStdString());
+                            break;
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+
         impl_->config.enable_stream(RS2_STREAM_DEPTH, depthWidth_, depthHeight_, RS2_FORMAT_Z16, depthFps_);
 
         try {
@@ -236,12 +310,19 @@ void RealSenseManager::captureLoop() {
             if (dev.supports(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR))
                 bus = QString("USB %1").arg(QString::fromUtf8(
                     dev.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR)));
-            QMutexLocker lock(&deviceInfoMutex_);
-            if (!name.isEmpty()) deviceName_ = name;
-            if (!bus.isEmpty()) deviceBus_ = bus;
+            QString serial;
+            if (dev.supports(RS2_CAMERA_INFO_SERIAL_NUMBER))
+                serial = QString::fromUtf8(dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+            {
+                QMutexLocker lock(&deviceInfoMutex_);
+                if (!name.isEmpty()) deviceName_ = name;
+                if (!bus.isEmpty()) deviceBus_ = bus;
+                activeSerial_ = serial;
+            }
         } catch (...) {}
 
         emit connectionChanged(true);
+        emit availableDevicesChanged();
 
     } catch (const rs2::error &e) {
         // Only emit the error the first time init fails (avoid log spam

@@ -88,6 +88,15 @@ class AppController : public QObject {
     Q_PROPERTY(QVariantList realSenseColorModes READ realSenseColorModes NOTIFY deviceStateChanged)
     Q_PROPERTY(QVariantList captureCardFormats READ captureCardFormats NOTIFY deviceStateChanged)
 
+    // Live device enumeration for the per-badge selection dropdown. Each
+    // list contains {id, name, active} entries — the UI renders the
+    // dropdown only when the list has 2+ entries (multiple same-type
+    // devices attached). NOTIFY fires on plug/unplug AND when the active
+    // device changes.
+    Q_PROPERTY(QVariantList motorDevices READ motorDevices NOTIFY availableDevicesChanged)
+    Q_PROPERTY(QVariantList realSenseDevices READ realSenseDevices NOTIFY availableDevicesChanged)
+    Q_PROPERTY(QVariantList captureCardDevices READ captureCardDevices NOTIFY availableDevicesChanged)
+
     // Transmission quality (instant apply)
     Q_PROPERTY(int txQualityDepth READ txQualityDepth WRITE setTxQualityDepth NOTIFY txSettingsChanged)
     Q_PROPERTY(int txQualityCapture READ txQualityCapture WRITE setTxQualityCapture NOTIFY txSettingsChanged)
@@ -227,6 +236,27 @@ public:
     QVariantList realSenseColorModes() const;
     QVariantList captureCardFormats() const;
 
+    // ── Device enumeration / selection ────────────────────────────────
+    QVariantList motorDevices() const;
+    QVariantList realSenseDevices() const;
+    QVariantList captureCardDevices() const;
+
+    // Each setter tells the manager to prefer the new id (it restarts
+    // itself if needed), persists the choice via SettingsManager, and
+    // logs the switch. Empty id clears the preference (auto-pick).
+    Q_INVOKABLE void selectMotorDevice(const QString &id);
+    Q_INVOKABLE void selectRealSenseDevice(const QString &id);
+    Q_INVOKABLE void selectCaptureCardDevice(const QString &id);
+
+    // ── UI scale (VSCode-style Ctrl+Plus / Ctrl+Minus) ─────────────────
+    // Stored in SettingsManager so the user's zoom level survives
+    // restarts. Main.qml reads uiScaleFactor() at startup, binds it
+    // into Theme.scaleFactor, and calls setUiScaleFactor() on each
+    // Ctrl+Plus / Ctrl+Minus / Ctrl+0 activation so the value persists
+    // without waiting for a shutdown flush.
+    Q_INVOKABLE float uiScaleFactor() const;
+    Q_INVOKABLE void setUiScaleFactor(float v);
+
     Q_INVOKABLE void setRealSenseResolution(int depthW, int depthH, int depthFps, int colorW, int colorH, int colorFps);
     Q_INVOKABLE void setCaptureCardResolution(int w, int h, int fps);
 
@@ -268,6 +298,7 @@ public:
 signals:
     void showDepthOverlayChanged();
     void deviceStateChanged();
+    void availableDevicesChanged();
     void motorPositionChanged(int position);
     void depthChanged(float depth, float confidence);
     void measurePositionChanged();

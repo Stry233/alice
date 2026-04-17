@@ -1,5 +1,7 @@
 #include "core/coordination/SettingsManager.h"
 
+#include <algorithm>
+
 namespace alice {
 
 // Keys matching Android SettingsManager.kt
@@ -40,6 +42,19 @@ namespace keys {
 
     // Motor last position
     constexpr auto kMotorLastPos   = "motor/lastPosition";
+
+    // Preferred device ids for the three hot-pluggable hardware types.
+    // Empty string = auto-pick (the original Alice behaviour). When set,
+    // each manager tries to bind to the exact device first and falls
+    // back to auto-pick only if the device isn't present.
+    constexpr auto kPreferredMotor     = "devices/preferredMotorId";
+    constexpr auto kPreferredRealSense = "devices/preferredRealSenseSerial";
+    constexpr auto kPreferredCapture   = "devices/preferredCaptureId";
+
+    // UI scale (VSCode-style Ctrl+Plus / Ctrl+Minus). Multiplies Theme.dp()
+    // results. 1.0 = baseline design, below 1 = more density, above 1 =
+    // larger-on-screen for high-DPI panels or reduced-vision users.
+    constexpr auto kUiScaleFactor = "ui/scaleFactor";
 }
 
 SettingsManager::SettingsManager(QObject *parent)
@@ -174,6 +189,39 @@ void SettingsManager::resetAllSettings() {
     resetAutofocusSettings();
     resetMotorSettings();
     resetDepthSettings();
+}
+
+// ── Preferred device selection ──────────────────────────────────────
+
+QString SettingsManager::preferredMotorId() const {
+    return settings_.value(keys::kPreferredMotor).toString();
+}
+void SettingsManager::setPreferredMotorId(const QString &id) {
+    settings_.setValue(keys::kPreferredMotor, id);
+}
+
+QString SettingsManager::preferredRealSenseSerial() const {
+    return settings_.value(keys::kPreferredRealSense).toString();
+}
+void SettingsManager::setPreferredRealSenseSerial(const QString &serial) {
+    settings_.setValue(keys::kPreferredRealSense, serial);
+}
+
+QString SettingsManager::preferredCaptureDeviceId() const {
+    return settings_.value(keys::kPreferredCapture).toString();
+}
+void SettingsManager::setPreferredCaptureDeviceId(const QString &id) {
+    settings_.setValue(keys::kPreferredCapture, id);
+}
+
+float SettingsManager::uiScaleFactor() const {
+    // Clamp at read time so a corrupt settings file can't apply a wild
+    // value (tiny text is unusable, giant text overflows the window).
+    const float v = settings_.value(keys::kUiScaleFactor, 1.0f).toFloat();
+    return std::clamp(v, 0.6f, 2.0f);
+}
+void SettingsManager::setUiScaleFactor(float v) {
+    settings_.setValue(keys::kUiScaleFactor, std::clamp(v, 0.6f, 2.0f));
 }
 
 } // namespace alice

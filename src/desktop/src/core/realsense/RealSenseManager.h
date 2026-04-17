@@ -88,6 +88,29 @@ public:
     QVariantList availableDepthModes() const;
     QVariantList availableColorModes() const;
 
+    /**
+     * Enumerate every RealSense camera currently seen by librealsense.
+     * Each entry is a QVariantMap with:
+     *   "id"     — QString, RS2_CAMERA_INFO_SERIAL_NUMBER (stable,
+     *              globally unique per camera)
+     *   "name"   — QString, RS2_CAMERA_INFO_NAME
+     *   "active" — bool, true for the camera currently streaming
+     *
+     * Safe to call from any thread — takes no internal locks.
+     */
+    QVariantList availableDevices() const;
+
+    /**
+     * Persist a preferred serial number. On the next start() (or if
+     * currently running, immediately via restart) the pipeline will
+     * bind to this specific camera. Empty string clears the
+     * preference, reverting to librealsense's default pick.
+     */
+    void selectDevice(const QString &serial);
+
+    /** Read the currently-stored preference; empty if auto-pick. */
+    QString preferredDeviceId() const { return preferredSerial_; }
+
     static constexpr int kDefaultMinValidDepth = 200;
     static constexpr int kDefaultMaxValidDepth = 10000;
 
@@ -106,6 +129,8 @@ signals:
     void colorFrameReady(const QImage &frame);
     void depthFrameReady(const QImage &colorizedDepth);
     void error(const QString &message);
+    /** Enumeration or active camera changed — UI re-reads the list. */
+    void availableDevicesChanged();
 
 private slots:
     void checkFrameTimeout();
@@ -163,6 +188,15 @@ private:
     mutable QMutex deviceInfoMutex_;
     QString deviceName_;
     QString deviceBus_;
+    // Serial of the currently-streaming camera — used as the "active"
+    // match key in availableDevices().
+    QString activeSerial_;
+
+    // User-selected preferred serial. Populated at startup from
+    // SettingsManager and by selectDevice() from the UI. On a new
+    // start() we pass this to rs2::config::enable_device() so librealsense
+    // binds to the exact camera the user picked.
+    QString preferredSerial_;
 
     // Frame timeout watchdog (main thread timer)
     QTimer frameTimeoutTimer_;

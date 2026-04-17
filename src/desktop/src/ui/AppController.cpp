@@ -128,6 +128,16 @@ AppController::AppController(QObject *parent)
     connect(realsense_.get(), &RealSenseManager::error,
             this, [this](const QString &msg) { log("REALSENSE", "ERROR: " + msg); });
 
+    // Fan in the three managers' enumeration signals into a single
+    // availableDevicesChanged so QML re-binds every motor/RealSense/
+    // capture-card dropdown on plug, unplug, or active-device change.
+    connect(motor_.get(), &MotorController::availableDevicesChanged,
+            this, &AppController::availableDevicesChanged);
+    connect(realsense_.get(), &RealSenseManager::availableDevicesChanged,
+            this, &AppController::availableDevicesChanged);
+    connect(captureCard_.get(), &CaptureCardManager::availableDevicesChanged,
+            this, &AppController::availableDevicesChanged);
+
     // Device coordination → autofocus readiness
     connect(coordinator_.get(), &DeviceCoordinator::motorConnectionChanged,
             this, [this](bool connected) {
@@ -293,6 +303,22 @@ void AppController::initialize() {
     int lastPos = settings_->motorLastPosition();
     if (lastPos > 0) {
         motor_->setPosition(lastPos);
+    }
+
+    // Restore preferred hardware selections BEFORE coordinator->start()
+    // kicks off device discovery — otherwise the managers auto-pick the
+    // first available device and the preferred choice doesn't take
+    // effect until the next healthCheck tick (several seconds later).
+    // selectDevice() on each manager is a no-op if the id is empty
+    // (the auto-pick default), so unconfigured systems are unaffected.
+    if (const QString id = settings_->preferredMotorId(); !id.isEmpty()) {
+        motor_->selectDevice(id);
+    }
+    if (const QString s = settings_->preferredRealSenseSerial(); !s.isEmpty()) {
+        realsense_->selectDevice(s);
+    }
+    if (const QString id = settings_->preferredCaptureDeviceId(); !id.isEmpty()) {
+        captureCard_->selectDevice(id);
     }
 
     // Load the YOLO face detection model. Search order:
@@ -776,6 +802,37 @@ void AppController::broadcastTrackedFaces() {
 QVariantList AppController::realSenseDepthModes() const { return realsense_->availableDepthModes(); }
 QVariantList AppController::realSenseColorModes() const { return realsense_->availableColorModes(); }
 QVariantList AppController::captureCardFormats() const { return captureCard_->availableFormats(); }
+
+// ── Device enumeration + selection ────────────────────────────────────
+QVariantList AppController::motorDevices() const       { return motor_->availableDevices(); }
+QVariantList AppController::realSenseDevices() const   { return realsense_->availableDevices(); }
+QVariantList AppController::captureCardDevices() const { return captureCard_->availableDevices(); }
+
+void AppController::selectMotorDevice(const QString &id) {
+    motor_->selectDevice(id);
+    settings_->setPreferredMotorId(id);
+    log("MOTOR", QString("Preferred device set: %1")
+        .arg(id.isEmpty() ? QStringLiteral("(auto)") : id));
+}
+void AppController::selectRealSenseDevice(const QString &id) {
+    realsense_->selectDevice(id);
+    settings_->setPreferredRealSenseSerial(id);
+    log("DEPTH", QString("Preferred camera set: %1")
+        .arg(id.isEmpty() ? QStringLiteral("(auto)") : id));
+}
+void AppController::selectCaptureCardDevice(const QString &id) {
+    captureCard_->selectDevice(id);
+    settings_->setPreferredCaptureDeviceId(id);
+    log("CAMERA", QString("Preferred capture input set: %1")
+        .arg(id.isEmpty() ? QStringLiteral("(auto)") : id));
+}
+
+float AppController::uiScaleFactor() const {
+    return settings_->uiScaleFactor();
+}
+void AppController::setUiScaleFactor(float v) {
+    settings_->setUiScaleFactor(v);
+}
 
 void AppController::setRealSenseResolution(int dw, int dh, int df, int cw, int ch, int cf) {
     realsense_->setStreamConfig(dw, dh, df, cw, ch, cf);

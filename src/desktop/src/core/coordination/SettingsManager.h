@@ -100,6 +100,22 @@ public:
     int motorLastPosition() const;
     void setMotorLastPosition(int v);
 
+    // Preferred device ids — persisted user choice for each hot-pluggable
+    // hardware category. Empty string means "auto-pick" (original Alice
+    // behaviour). Consulted by each manager at connect time.
+    QString preferredMotorId() const;
+    void setPreferredMotorId(const QString &id);
+    QString preferredRealSenseSerial() const;
+    void setPreferredRealSenseSerial(const QString &serial);
+    QString preferredCaptureDeviceId() const;
+    void setPreferredCaptureDeviceId(const QString &id);
+
+    // VSCode-style UI scale. Multiplies Theme.dp() results. Stored
+    // value is clamped to [0.6, 2.0] so a bad config can't lock users
+    // out of readable text.
+    float uiScaleFactor() const;
+    void setUiScaleFactor(float v);
+
 public slots:
     void resetAutofocusSettings();
     void resetMotorSettings();

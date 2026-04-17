@@ -3,7 +3,12 @@ import QtQuick.Layouts
 import Alice.UI
 
 Rectangle {
-    height: Theme.dp(44)
+    // implicitHeight (not just height) so ColumnLayout picks up the
+    // dp()-based size when Layout.preferredHeight is left unset. Without
+    // this the enclosing layout sees implicitHeight=0, renders the strip
+    // at 0 px, and the Rectangle's own `height` is just ignored.
+    implicitHeight: Theme.dp(44)
+    height: implicitHeight
     color: Theme.surface
 
     // Strip font: HTML 9px at 200% = 18px. Ratio to strip height (44): 40.9%
