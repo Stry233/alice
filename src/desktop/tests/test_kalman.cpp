@@ -85,6 +85,74 @@ TEST(DepthEstimator, RejectsOutOfRangePixels) {
     EXPECT_FALSE(r.isValid);
 }
 
+TEST(DepthEstimator, ExplicitResetAfterSmallPositionMoveIsTreatedAsJump) {
+    // Press/click semantics: when the user taps a new location, the new
+    // sample must be taken "independently" — with no blending against the
+    // old crosshair's depth. This must hold even if the click lands close
+    // to the previous position (delta below the auto-reset threshold),
+    // because the user's intent is a teleport, not a drift.
+    //
+    // Callers distinguish press from drag and invoke reset() before the
+    // first sample at the new target. This test verifies that pathway.
+    DepthEstimator est;
+    auto close = makeUniformFrame(640, 480, 500);
+    for (int i = 0; i < 30; ++i) {
+        est.process(close.data(), 640, 480, 0.5f, 0.5f);
+    }
+
+    // Simulate the user tapping near the current crosshair on a frame
+    // where the scene has changed to 4000 mm. Without an explicit reset
+    // the 1 % position delta would not trip the auto reset, and the
+    // estimator would EMA-blend toward the new value instead of snapping.
+    est.reset();
+    auto far = makeUniformFrame(640, 480, 4000);
+    auto r = est.process(far.data(), 640, 480, 0.51f, 0.5f);
+    EXPECT_TRUE(r.isValid);
+    EXPECT_NEAR(r.valueM, 4.0f, 0.01f);
+}
+
+TEST(DepthEstimator, SlowDragAcrossTwoDepthRegionsSnapsIndependently) {
+    // Reproduces the user-reported bug: when the crosshair is dragged
+    // smoothly from one scene region to another (each per-frame delta is
+    // below the reset threshold), the old depth lingers. The estimator
+    // must treat ANY displacement that has accumulated past the threshold
+    // since the last reset as a target change — not just frame-to-frame
+    // jumps. Otherwise a 60-frame slow drag across the whole field of
+    // view never triggers the reset.
+    DepthEstimator est;
+
+    // Left half of frame (x < 320) is at 500 mm, right half at 4000 mm.
+    const int W = 640, H = 480;
+    std::vector<uint16_t> frame(W * H, 0);
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            frame[y * W + x] = (x < 320) ? 500 : 4000;
+        }
+    }
+
+    // Converge on the left region.
+    for (int i = 0; i < 30; ++i) {
+        est.process(frame.data(), W, H, 0.2f, 0.5f);
+    }
+
+    // Slow drag: 0.2 → 0.8 over 60 frames, 0.01 per frame. No single
+    // frame's delta exceeds 0.02, so the previous "frame-to-frame" reset
+    // check never fires.
+    DepthEstimator::Reading last;
+    for (int i = 1; i <= 60; ++i) {
+        const float x = 0.2f + i * 0.01f;
+        last = est.process(frame.data(), W, H, x, 0.5f);
+    }
+
+    // End position is firmly in the 4000 mm region. By the end of the drag
+    // the reported depth must reflect the NEW region, not some EMA-blended
+    // compromise with the stale 500 mm state.
+    EXPECT_TRUE(last.isValid);
+    EXPECT_NEAR(last.valueM, 4.0f, 0.1f)
+        << "Slow drag must reach the new region. Got " << last.valueM
+        << " m after crosshair moved 60 % of the frame";
+}
+
 TEST(DepthEstimator, PositionChangeResetsState) {
     // This is the PRIMARY bug the new estimator fixes: when the target
     // moves to a new spatial location, the temporal state must be
@@ -107,6 +175,37 @@ TEST(DepthEstimator, PositionChangeResetsState) {
     auto afterMove = est.process(far.data(), 640, 480, 0.8f, 0.5f);
     EXPECT_TRUE(afterMove.isValid);
     EXPECT_NEAR(afterMove.valueM, 4.0f, 0.01f);
+}
+
+TEST(DepthEstimator, JumpsToFarTargetWithPartialHoles) {
+    // This reproduces the real-world bug: at 4 m+ the RealSense
+    // commonly returns valid depth for only ~40 % of a small ROI
+    // (plain walls have low texture → low matching confidence →
+    // sparse valid pixels). A 400 % scene jump must still snap,
+    // not slowly creep toward the new value.
+    DepthEstimator est;
+
+    auto close = makeUniformFrame(640, 480, 500);
+    for (int i = 0; i < 20; ++i) {
+        est.process(close.data(), 640, 480, 0.5f, 0.5f);
+    }
+
+    // Build a sparse far frame: only 20 / 49 ROI pixels valid (40 %).
+    std::vector<uint16_t> farSparse(640 * 480, 0);
+    const int cx = 320, cy = 240;
+    int filled = 0;
+    for (int dy = -3; dy <= 3 && filled < 20; ++dy) {
+        for (int dx = -3; dx <= 3 && filled < 20; ++dx) {
+            farSparse[(cy + dy) * 640 + (cx + dx)] = 4000;
+            ++filled;
+        }
+    }
+
+    auto r = est.process(farSparse.data(), 640, 480, 0.5f, 0.5f);
+    EXPECT_TRUE(r.isValid);
+    EXPECT_NEAR(r.valueM, 4.0f, 0.1f)
+        << "Must snap to 4 m even with 40% validRatio. "
+        << "Got " << r.valueM << " m, confidence " << r.confidence;
 }
 
 TEST(DepthEstimator, DiscontinuitySnapsAtFixedPosition) {
@@ -167,6 +266,40 @@ TEST(DepthEstimator, Reset) {
     // After reset, the very first reading IS the state — no blending
     // against the old 1500 mm.
     EXPECT_NEAR(r.valueM, 4.0f, 0.01f);
+}
+
+TEST(DepthEstimator, ConfidenceSaturatesDuringStableTracking) {
+    // Regression guard: downstream consumers (AutofocusController) gate on
+    // confidence >= 0.7 before driving the motor. After the estimator has
+    // seen several stable readings its reported confidence must approach
+    // 1.0, even if each individual ROI sample is only moderately clean.
+    // This matches the old 1-D Kalman behaviour and is what the 0.7
+    // autofocus threshold was calibrated against.
+    DepthEstimator est;
+    auto frame = makeUniformFrame(640, 480, 2000);
+    float conf = 0.0f;
+    for (int i = 0; i < 15; ++i) {
+        conf = est.process(frame.data(), 640, 480, 0.5f, 0.5f).confidence;
+    }
+    EXPECT_GT(conf, 0.95f)
+        << "Stable tracking must produce high confidence. Got " << conf;
+}
+
+TEST(DepthEstimator, ConfidenceDropsAfterDiscontinuitySnap) {
+    // After a scene change, the estimator hasn't had time to verify its
+    // new state with successive agreeing samples. Temporal confidence
+    // resets, so the first post-snap reading reports only the spatial
+    // confidence — rising again as the track proves itself.
+    DepthEstimator est;
+    auto close = makeUniformFrame(640, 480, 500);
+    for (int i = 0; i < 20; ++i) est.process(close.data(), 640, 480, 0.5f, 0.5f);
+    auto stable = est.process(close.data(), 640, 480, 0.5f, 0.5f);
+    EXPECT_GT(stable.confidence, 0.95f);
+
+    auto far = makeUniformFrame(640, 480, 4500);
+    auto snap = est.process(far.data(), 640, 480, 0.5f, 0.5f);
+    EXPECT_LT(snap.confidence, 1.01f); // spatial only, no temporal boost yet
+    EXPECT_NEAR(snap.valueM, 4.5f, 0.05f);
 }
 
 TEST(DepthEstimator, LowConfidenceForPatchyROI) {

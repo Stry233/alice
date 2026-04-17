@@ -65,10 +65,11 @@ private:
     // ── Tunables ────────────────────────────────────────────────────
     static constexpr int kRoiRadius = 3;              // 7×7 sample window
     static constexpr int kMinValidPixels = 8;         // require ≥8 of 49
-    static constexpr float kDiscontinuityDelta = 0.25f;   // 25 % rel. change
-    static constexpr float kDiscontinuityConfidence = 0.45f;
+    static constexpr float kDiscontinuityDelta = 0.25f;      // min 25 % rel. change
+    static constexpr float kDiscontinuityEvidence = 0.15f;   // relΔ × conf bar
     static constexpr float kPositionResetThresholdSq = 4e-4f; // 2 % of frame
     static constexpr int kMaxStaleFrames = 30;        // ~1 s at 30 FPS
+    static constexpr float kTemporalConfGrowth = 0.15f; // ~7 stable frames → 1.0
 
     // ── State ───────────────────────────────────────────────────────
     float stateMm_ = 0.0f;
@@ -76,7 +77,15 @@ private:
     int staleFrames_ = 0;
     float lastTargetX_ = -1.0f;
     float lastTargetY_ = -1.0f;
-    float lastConfidence_ = 0.0f;
+
+    // Temporal tracking confidence. Grows toward 1 with each stable
+    // update, resets on discontinuity / init / external reset(). The
+    // reported output confidence is max(spatial, temporal) so once the
+    // estimator has settled it reports high confidence even when the
+    // instantaneous ROI quality dips (sparse valid pixels at 4 m+ etc.).
+    // Mirrors the behaviour of the old 1-D Kalman's P-derived confidence
+    // and is what autofocus consumers expect.
+    float temporalConf_ = 0.0f;
 
     // ── Params ──────────────────────────────────────────────────────
     int minValidMm_ = 200;

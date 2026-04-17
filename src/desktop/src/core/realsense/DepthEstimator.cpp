@@ -11,7 +11,7 @@ void DepthEstimator::reset() {
     staleFrames_ = 0;
     lastTargetX_ = -1.0f;
     lastTargetY_ = -1.0f;
-    lastConfidence_ = 0.0f;
+    temporalConf_ = 0.0f;
 }
 
 void DepthEstimator::setValidRange(int minMm, int maxMm) {
@@ -67,19 +67,28 @@ DepthEstimator::SampleResult DepthEstimator::sampleROI(
     const float q25 = static_cast<float>(samples[n / 4]);
     const float q75 = static_cast<float>(samples[(3 * n) / 4]);
 
-    // Spatial confidence = validRatio × tightness.
-    //   validRatio : fraction of ROI pixels that produced a valid reading.
-    //                Low ratio → depth is patchy here (edge, hole, specular).
-    //   tightness  : 1 - IQR/median, clamped. Measures how tightly the
-    //                valid pixels cluster around the median. High IQR (scene
-    //                has a depth discontinuity within the ROI) → low trust.
+    // Spatial confidence combines two independent signals:
+    //
+    //   validity  = min(validRatio * 2, 1). Saturates at 50 % valid pixels.
+    //               Above that, the median is already statistically robust
+    //               (~25 samples). More valid pixels don't improve the
+    //               median's reliability — they only tighten variance, and
+    //               that's what tightness measures. The previous linear
+    //               0-100% scale unfairly penalized 4 m+ readings where
+    //               40 % valid is a GOOD result.
+    //
+    //   tightness = 1 - IQR/median, clamped. Measures how tightly the
+    //               valid pixels cluster around the median. High IQR (ROI
+    //               straddles a depth edge) → low trust. A tight cluster
+    //               at low validRatio is still a trustworthy measurement.
     const float validRatio = static_cast<float>(n) / static_cast<float>(kCapacity);
+    const float validity = std::min(validRatio * 2.0f, 1.0f);
     const float iqr = q75 - q25;
     const float normalizedIqr = (median > 1.0f) ? (iqr / median) : 1.0f;
     const float tightness = std::clamp(1.0f - normalizedIqr * 4.0f, 0.0f, 1.0f);
 
     result.medianMm = median;
-    result.spatialConfidence = validRatio * tightness;
+    result.spatialConfidence = validity * tightness;
     result.valid = true;
     return result;
 }
@@ -120,7 +129,7 @@ DepthEstimator::Reading DepthEstimator::process(
         ++staleFrames_;
         if (initialized_ && staleFrames_ < kMaxStaleFrames) {
             out.valueM = stateMm_ / 1000.0f;
-            out.confidence = lastConfidence_ *
+            out.confidence = temporalConf_ *
                 std::max(0.0f, 1.0f - static_cast<float>(staleFrames_)
                                        / kMaxStaleFrames);
             out.staleFrames = staleFrames_;
@@ -136,46 +145,57 @@ DepthEstimator::Reading DepthEstimator::process(
     const float spatialConf = sample.spatialConfidence;
 
     if (!initialized_) {
-        // Fresh start: the first valid reading IS the state, and the
-        // historical confidence is seeded with this frame's spatial
-        // confidence (otherwise the 70/30 blend below would artificially
-        // depress the very first reported confidence).
+        // Fresh start: the first valid reading IS the state. Temporal
+        // confidence starts at 0 — one sample is not enough to trust;
+        // the output confidence falls back to spatial for this frame.
         stateMm_ = measurementMm;
-        lastConfidence_ = spatialConf;
+        temporalConf_ = 0.0f;
         initialized_ = true;
     } else {
         // Discontinuity check. Depth can change abruptly for legitimate
-        // reasons: object leaves frame, user moves hand in front of lens,
-        // scene cut. We want to snap to the new value — but only if the
-        // measurement is confident enough that it's not just noise.
+        // reasons: object leaves frame, hand enters frame, scene cut.
+        // We snap to the new value when the measurement is statistically
+        // unlikely to be noise.
+        //
+        // The bar uses the product relDelta × spatialConfidence. Larger
+        // deltas require less confidence (a 400 % change with 30 %
+        // confidence is obviously real; a 30 % change with 30 %
+        // confidence could be noise). The constant 0.15 is tuned so:
+        //   delta   conf needed
+        //   0.25    0.60   (boundary: small change needs high conviction)
+        //   0.50    0.30
+        //   1.00    0.15
+        //   3.00    0.05   (huge change: almost any valid reading counts)
         const float relDelta = std::abs(measurementMm - stateMm_)
                              / std::max(stateMm_, 1.0f);
         const bool discontinuity =
             relDelta > kDiscontinuityDelta &&
-            spatialConf > kDiscontinuityConfidence;
+            relDelta * spatialConf > kDiscontinuityEvidence;
 
         if (discontinuity) {
-            // Hard reset — new scene, new state.
+            // Hard reset — new scene, new state, temporal trust restarts.
             stateMm_ = measurementMm;
+            temporalConf_ = 0.0f;
         } else {
-            // Normal tracking: confidence-weighted EMA.
-            // High-confidence measurements pull the state quickly;
-            // low-confidence ones contribute little, preserving stability
-            // during patchy sensor data.
+            // Normal tracking: confidence-weighted EMA on state, and a
+            // separate growth on temporal confidence. Each stable update
+            // adds kTemporalConfGrowth (~0.15) → saturates near 1.0 in
+            // ~7 frames, mirroring the old Kalman's P-decay curve.
             const float alpha = std::clamp(baseAlpha_ * spatialConf, 0.0f, 1.0f);
             stateMm_ = alpha * measurementMm + (1.0f - alpha) * stateMm_;
+            temporalConf_ = std::min(1.0f, temporalConf_ + kTemporalConfGrowth);
         }
     }
 
     // ── 4. Output ──────────────────────────────────────────────────────
-    // Combined confidence: spatial (this frame) × 0.7 + historical × 0.3.
-    // Gives a smoothed confidence signal that doesn't flicker with
-    // frame-to-frame ROI quality changes.
-    const float combined = spatialConf * 0.7f + lastConfidence_ * 0.3f;
-    lastConfidence_ = combined;
-
+    // Report max(spatial, temporal): once tracking has settled, temporal
+    // dominates (≈ 1.0) and transient ROI-quality dips don't falsely
+    // signal "bad reading" to downstream consumers (autofocus gates on
+    // this value). On a fresh init or right after a discontinuity snap,
+    // temporal is 0 and spatial carries the signal until the filter
+    // proves itself over the next few frames.
     out.valueM = stateMm_ / 1000.0f;
-    out.confidence = std::clamp(combined, 0.0f, 1.0f);
+    out.confidence = std::clamp(std::max(spatialConf, temporalConf_), 0.0f, 1.0f);
     out.isValid = true;
     out.staleFrames = 0;
     return out;

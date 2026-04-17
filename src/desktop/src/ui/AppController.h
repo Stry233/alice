@@ -204,6 +204,13 @@ public:
 
     // ── Depth measurement ────────────────────────────────────────────
     Q_INVOKABLE void setMeasurementPosition(float x, float y);
+    /**
+     * Press/tap variant of setMeasurementPosition: forces the depth
+     * estimator to discard any context from the old crosshair position.
+     * Call from QML mouse-press / tap handlers; keep setMeasurementPosition
+     * for drag events where some smoothing across frames is desirable.
+     */
+    Q_INVOKABLE void jumpToMeasurementPosition(float x, float y);
     Q_INVOKABLE void processTap(float x, float y);
 
     // ── Face tracking ────────────────────────────────────────────────
@@ -291,6 +298,13 @@ private:
     void broadcastSettings();
     void updateDepthColormapGate();
 
+    // Calibration mapping persistence. Studio caches the currently-loaded
+    // mapping so it auto-restores on the next launch — whether it came
+    // from a local file, a preset, or a remote sync push.
+    static QString mappingCachePath();
+    void saveMappingCache();
+    void loadMappingCache();
+
     // Core components
     std::unique_ptr<RealSenseManager> realsense_;
     std::unique_ptr<CaptureCardManager> captureCard_;
@@ -318,6 +332,12 @@ private:
     // Depth readings (stored directly from RealSense, independent of autofocus state)
     float currentDepth_ = 0.0f;
     float currentConfidence_ = 0.0f;
+
+    // Last slider value posted for "Depth Smoothing". The slider ranges
+    // 10-500 (historical Kalman-R scale); AppController::setDepthSmoothing
+    // maps that to the DepthEstimator's EMA alpha internally. Cached here
+    // so the UI slider shows the user-facing value, not the alpha.
+    float depthSmoothingSliderValue_ = 100.0f;
 
     // Cached tracked faces from the most recent detection pass (also pushed
     // to the sync peer for cross-device overlay).

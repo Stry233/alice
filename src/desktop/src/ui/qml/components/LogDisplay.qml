@@ -33,15 +33,31 @@ Item {
 
         // Scrollable, selectable log
         ScrollView {
+            id: logScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            // Each log entry is kept on exactly one line (see TextArea
+            // below). Show the horizontal scrollbar so the user can pan
+            // right to read long lines, but pin contentX to 0 whenever
+            // a new entry arrives — the view should never drift on its
+            // own. Only explicit user interaction moves it.
+            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+            property bool userScrolledX: false
+            Connections {
+                target: logScroll.ScrollBar.horizontal
+                function onPressedChanged() {
+                    if (logScroll.ScrollBar.horizontal.pressed) logScroll.userScrolledX = true
+                }
+            }
 
             TextArea {
                 id: logArea
                 readOnly: true
                 selectByMouse: true
-                wrapMode: TextArea.Wrap
+                // One entry per line, no auto-wrap. Long lines extend
+                // horizontally and the ScrollView exposes a scrollbar.
+                wrapMode: TextArea.NoWrap
                 font.family: Theme.fontFamilyMono
                 font.pixelSize: Theme.fontSizeMicro
                 color: Theme.textSecondary
@@ -128,6 +144,10 @@ Item {
                         }
                     }
 
+                    // <pre> preserves whitespace (white-space: pre) which
+                    // pairs with TextArea.NoWrap above to guarantee each
+                    // entry stays on exactly one line — the horizontal
+                    // ScrollView handles overflow.
                     var out = ""
                     if (bannerLines.length > 0) {
                         out += "<pre style='margin:0;line-height:0.95;'>"
@@ -155,6 +175,13 @@ Item {
                     if (autoScrollEnabled) {
                         Qt.callLater(function() {
                             logArea.cursorPosition = logArea.length
+                            // Reset the HORIZONTAL scroll to the left on every
+                            // new entry — unless the user has manually panned
+                            // right (then respect their position). The Flickable
+                            // behind ScrollView exposes contentX.
+                            if (!logScroll.userScrolledX && logScroll.contentItem) {
+                                logScroll.contentItem.contentX = 0
+                            }
                         })
                     }
                 }

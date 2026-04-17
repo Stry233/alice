@@ -243,14 +243,15 @@ Item {
 
                         MouseArea {
                             anchors.fill: parent; cursorShape: Qt.CrossCursor; property bool isDragging: false
-                            onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
-                            onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                            onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
+                            onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
                             onReleased: isDragging = false
-                            function updatePos(mx, my) {
+                            function updatePos(mx, my, isJump) {
                                 if (!alice) return
                                 var nx = Math.max(0, Math.min(1, (mx - calibDepthRect.vidX) / calibDepthRect.fitW))
                                 var ny = Math.max(0, Math.min(1, (my - calibDepthRect.vidY) / calibDepthRect.fitH))
-                                alice.setMeasurementPosition(nx, ny)
+                                if (isJump) alice.processTap(nx, ny)
+                                else alice.setMeasurementPosition(nx, ny)
                             }
                         }
                     }

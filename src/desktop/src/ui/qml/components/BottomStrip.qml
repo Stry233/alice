@@ -26,7 +26,10 @@ Rectangle {
             spacing: 0
             Text { text: "Conf: "; color: Theme.textSecondary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
             Text {
-                text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
+                // Pad to 3 digits (space-padded) so "99%" and "100%" occupy
+                // the same pixel width in monospace. Prevents the strip from
+                // jiggling each time confidence crosses the 100/99 boundary.
+                text: String(Math.round((alice ? alice.depthConfidence : 0) * 100)).padStart(3, "\u00A0") + "%"
                 color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
                 font.family: Theme.fontFamilyMono; font.pixelSize: stripFont
                 Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }

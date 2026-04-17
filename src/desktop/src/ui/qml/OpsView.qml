@@ -75,6 +75,7 @@ Item {
                             Row {
                                 spacing: Theme.dp(6)
                                 Text {
+                                    id: wideDepthText
                                     text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
                                     font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
                                     color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
@@ -83,10 +84,21 @@ Item {
                                 Text {
                                     id: wideConfText
                                     visible: alice ? alice.depth > 0 : false
+                                    // Reserve a fixed 4-char ("100%") slot so the
+                                    // "99%"→"100%" transition doesn't widen the row and
+                                    // push the green depth number left.
+                                    horizontalAlignment: Text.AlignRight
+                                    width: wideConfMetrics.advanceWidth
                                     text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
                                     font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
                                     color: Theme.textSecondary
-                                    anchors.baseline: parent.children[0].baseline
+                                    anchors.baseline: wideDepthText.baseline
+                                    TextMetrics {
+                                        id: wideConfMetrics
+                                        font.family: Theme.fontFamilyMono
+                                        font.pixelSize: Theme.dp(18)
+                                        text: "100%"
+                                    }
                                 }
                             }
                         }
@@ -194,14 +206,23 @@ Item {
                                     enabled: alice ? alice.focusMode !== 3 : true  // no manual tap in AF-F
                                     cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                     property bool isDragging: false
-                                    onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
-                                    onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                    // Press = full tap: teleport the measurement, reset the
+                                    // depth estimator, AND update the autofocus focus point
+                                    // (processTap). AF-C gates depth updates on proximity to
+                                    // the focus point — without this call focusX_/Y_ stay at
+                                    // the previous value and AF-C silently rejects new depth.
+                                    // Drag = soft position update only; keeps focus pinned
+                                    // to the original tap point so dragging to inspect depth
+                                    // elsewhere doesn't hijack AF-C's target.
+                                    onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
+                                    onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
                                     onReleased: isDragging = false
-                                    function updatePos(mx, my) {
+                                    function updatePos(mx, my, isJump) {
                                         if (!alice) return
                                         var nx = Math.max(0, Math.min(1, (mx - wideDepthRect.vidX) / wideDepthRect.fitW))
                                         var ny = Math.max(0, Math.min(1, (my - wideDepthRect.vidY) / wideDepthRect.fitH))
-                                        alice.setMeasurementPosition(nx, ny)
+                                        if (isJump) alice.processTap(nx, ny)
+                                        else alice.setMeasurementPosition(nx, ny)
                                     }
                                 }
                             }
@@ -538,7 +559,10 @@ Item {
                         Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
                     }
                     Text {
-                        text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "% confidence"
+                        // Space-pad to 3 digits so this label stops the whole
+                        // panel from reflowing when confidence flickers across
+                        // the 100/99 boundary.
+                        text: String(Math.round((alice ? alice.depthConfidence : 0) * 100)).padStart(3, "\u00A0") + "% confidence"
                         font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); color: Theme.textSecondary
                         Layout.alignment: Qt.AlignHCenter
                     }
@@ -610,6 +634,7 @@ Item {
                         Row {
                             spacing: Theme.dp(6)
                             Text {
+                                id: stdDepthText
                                 text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
                                 font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
                                 color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
@@ -618,10 +643,19 @@ Item {
                             Text {
                                 id: confText1
                                 visible: alice ? alice.depth > 0 : false
+                                // Fixed 4-char slot — see wideConfText above.
+                                horizontalAlignment: Text.AlignRight
+                                width: stdConfMetrics.advanceWidth
                                 text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
                                 font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
                                 color: Theme.textSecondary
-                                anchors.baseline: parent.children[0].baseline
+                                anchors.baseline: stdDepthText.baseline
+                                TextMetrics {
+                                    id: stdConfMetrics
+                                    font.family: Theme.fontFamilyMono
+                                    font.pixelSize: Theme.dp(18)
+                                    text: "100%"
+                                }
                             }
                         }
                     }
@@ -706,14 +740,15 @@ Item {
                                 enabled: alice ? alice.focusMode !== 3 : true
                                 cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                 property bool isDragging: false
-                                onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
-                                onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
+                                onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
                                 onReleased: isDragging = false
-                                function updatePos(mx, my) {
+                                function updatePos(mx, my, isJump) {
                                     if (!alice) return
                                     var nx = Math.max(0, Math.min(1, (mx - stdDepthRect.vidX) / stdDepthRect.fitW))
                                     var ny = Math.max(0, Math.min(1, (my - stdDepthRect.vidY) / stdDepthRect.fitH))
-                                    alice.setMeasurementPosition(nx, ny)
+                                    if (isJump) alice.processTap(nx, ny)
+                                    else alice.setMeasurementPosition(nx, ny)
                                 }
                             }
                         }

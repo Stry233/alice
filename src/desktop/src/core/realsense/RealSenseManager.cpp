@@ -64,6 +64,16 @@ void RealSenseManager::setMeasurementPosition(float x, float y) {
     measureYCached_.store(cy, std::memory_order_relaxed);
 }
 
+void RealSenseManager::jumpToPosition(float x, float y) {
+    setMeasurementPosition(x, y);
+    // Clear the estimator state so the capture thread's very next frame
+    // samples the new target without any EMA blending against the old
+    // position's depth. Serialised on the same mutex that capture uses
+    // around estimator_.process() so we never race a reset with a frame.
+    QMutexLocker lock(&estimatorParamsMutex_);
+    estimator_.reset();
+}
+
 void RealSenseManager::getMeasurementPosition(float &x, float &y) const {
     QMutexLocker lock(&positionMutex_);
     x = measureX_;

@@ -23,6 +23,7 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcessEnvironment>
+#include <QStandardPaths>
 #include <QUrl>
 #include <QVariantMap>
 #include <limits>
@@ -331,6 +332,12 @@ void AppController::initialize() {
         }
     }
 
+    // Restore the last calibration mapping if one was cached. Done after
+    // autofocus_ has its settings applied but before device discovery
+    // starts, so by the time a depth reading is published the mapping is
+    // already active.
+    loadMappingCache();
+
     // Start device discovery (coordinator manages all three devices)
     coordinator_->start();
 
@@ -471,12 +478,22 @@ void AppController::setDepthMaxDistance(int mm) {
     realsense_->setMaxValidDepth(mm);
     settings_->setDepthMaxDistance(mm);
 }
-void AppController::setDepthSmoothing(float r) {
-    realsense_->setDepthSmoothing(r);
+void AppController::setDepthSmoothing(float sliderValue) {
+    // The QML slider ranges 10-500 for historical reasons (the old Kalman
+    // took measurement-noise R directly). The new DepthEstimator takes an
+    // EMA alpha in [0.02, 1.0]. Map inversely so "higher slider = smoother"
+    // still reads the same way to the user:
+    //   10  → alpha 1.00 (raw, no smoothing)
+    //   100 → alpha 0.80 (light smoothing — default)
+    //   500 → alpha 0.02 (heavy smoothing)
+    const float t = std::clamp((sliderValue - 10.0f) / 490.0f, 0.0f, 1.0f);
+    const float alpha = std::max(0.02f, 1.0f - t * 0.98f);
+    realsense_->setDepthSmoothing(alpha);
+    depthSmoothingSliderValue_ = sliderValue;
 }
 int AppController::depthMinDistance() const { return settings_->depthMinDistance(); }
 int AppController::depthMaxDistance() const { return settings_->depthMaxDistance(); }
-float AppController::depthSmoothingValue() const { return realsense_->depthSmoothing(); }
+float AppController::depthSmoothingValue() const { return depthSmoothingSliderValue_; }
 
 void AppController::resetAllSettings() {
     settings_->resetAllSettings();
@@ -487,7 +504,8 @@ void AppController::resetAllSettings() {
     motor_->setReversed(settings_->motorReverse());
     realsense_->setMinValidDepth(settings_->depthMinDistance());
     realsense_->setMaxValidDepth(settings_->depthMaxDistance());
-    realsense_->setDepthSmoothing(100.0f);
+    // Go through our own setter so the slider<->alpha mapping stays in sync
+    setDepthSmoothing(100.0f);
     log("SYSTEM", "All settings reset to defaults");
     emit autofocusStateChanged();
     emit deviceStateChanged();
@@ -552,6 +570,7 @@ void AppController::loadMappingFromFile(const QString &pathOrUrl) {
     if (autofocus_->loadMappingFromFile(localPath)) {
         log("AUTOFOCUS", QString("Mapping loaded from %1").arg(localPath));
         broadcastCurrentMapping();
+        saveMappingCache();
     } else {
         log("AUTOFOCUS", QString("ERROR: Failed to load mapping from %1").arg(localPath));
     }
@@ -561,11 +580,13 @@ void AppController::loadPreset(int presetIndex) {
     autofocus_->loadPreset(static_cast<MappingPreset>(presetIndex));
     log("AUTOFOCUS", "Preset loaded");
     broadcastCurrentMapping();
+    saveMappingCache();
 }
 
 void AppController::clearMapping() {
     autofocus_->clearMapping();
     log("AUTOFOCUS", "Mapping cleared");
+    saveMappingCache(); // removes the cache file when mapping is null
     if (syncServer_->hasClient()) {
         auto msg = SyncMessage::calibrationSync("CLEAR");
         syncServer_->broadcast(msg);
@@ -655,8 +676,19 @@ void AppController::setMeasurementPosition(float x, float y) {
     }
 }
 
+void AppController::jumpToMeasurementPosition(float x, float y) {
+    // Teleport: clear the estimator first so the new position is sampled
+    // without any carryover from the old crosshair's depth.
+    realsense_->jumpToPosition(x, y);
+    emit measurePositionChanged();
+    if (syncServer_->hasClient()) {
+        syncServer_->broadcast(SyncMessage::measurePosition(x, y));
+    }
+}
+
 void AppController::processTap(float x, float y) {
-    setMeasurementPosition(x, y);
+    // processTap is triggered by an explicit user tap — always a teleport.
+    jumpToMeasurementPosition(x, y);
     autofocus_->processTap(x, y);
 }
 
@@ -1043,6 +1075,7 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         if (action == "CLEAR") {
             autofocus_->clearMapping();
             emit autofocusStateChanged();
+            saveMappingCache();
             log("NETWORK", "Mapping cleared by remote");
         } else if (action == "PUSH") {
             QJsonObject mappingObj = message.payload["mapping"].toObject();
@@ -1053,6 +1086,7 @@ void AppController::onSyncMessage(const SyncMessage &message) {
                 if (mapping) {
                     autofocus_->loadMapping(*mapping);
                     emit autofocusStateChanged();
+                    saveMappingCache();
                     log("NETWORK", QString("Loaded mapping from remote sync: %1")
                         .arg(QString::fromStdString(mapping->name())));
                 } else {
@@ -1187,6 +1221,54 @@ void AppController::broadcastCurrentMapping() {
     syncServer_->broadcast(msg);
     log("NETWORK", QString("Synced mapping to client: %1")
         .arg(QString::fromStdString(mapping->name())));
+}
+
+// ── Calibration mapping persistence ────────────────────────────────────
+//
+// Studio caches the currently-loaded mapping to disk so it can auto-restore
+// on the next launch. The cache is written by whatever path produced the
+// mapping — local file load, preset, or a remote CalibrationSync/PUSH —
+// because every path ultimately calls AutofocusController::loadMapping()
+// and those callers invoke saveMappingCache() after a successful load.
+
+QString AppController::mappingCachePath() {
+    const QString dir = QStandardPaths::writableLocation(
+        QStandardPaths::AppLocalDataLocation);
+    if (dir.isEmpty()) return {};
+    QDir().mkpath(dir);
+    return dir + "/mapping_cache.json";
+}
+
+void AppController::saveMappingCache() {
+    const QString path = mappingCachePath();
+    if (path.isEmpty()) return;
+    const auto &mapping = autofocus_->currentMapping();
+    if (!mapping) {
+        QFile::remove(path); // cache stale → nothing to restore
+        return;
+    }
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate)) return;
+    f.write(QByteArray::fromStdString(mapping->toJson()));
+}
+
+void AppController::loadMappingCache() {
+    const QString path = mappingCachePath();
+    if (path.isEmpty() || !QFile::exists(path)) return;
+    QFile f(path);
+    if (!f.open(QIODevice::ReadOnly)) return;
+    const auto data = f.readAll();
+    auto mapping = AutofocusMapping::fromJson(data.toStdString());
+    if (!mapping) {
+        log("AUTOFOCUS", "Cached mapping could not be parsed — ignoring");
+        QFile::remove(path);
+        return;
+    }
+    if (autofocus_->loadMapping(*mapping)) {
+        log("AUTOFOCUS", QString("Restored cached mapping: %1 (%2 points)")
+            .arg(QString::fromStdString(mapping->name()))
+            .arg(mapping->points().size()));
+    }
 }
 
 void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame,

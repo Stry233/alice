@@ -55,6 +55,17 @@ public:
     void getMeasurementPosition(float &x, float &y) const;
 
     /**
+     * Treat the upcoming measurement as a teleport to a new target:
+     * clear the depth estimator's temporal state so the next reading is
+     * taken without any blending from the old position. Called by the UI
+     * on mouse-press / tap events. Drag events keep using
+     * setMeasurementPosition alone — the auto per-frame delta check still
+     * covers big single-frame jumps, and the filter intentionally carries
+     * some context across small drifts.
+     */
+    void jumpToPosition(float x, float y);
+
+    /**
      * Sample the depth (in meters) at a point in the color frame.
      * @param nx Normalised X in [0, 1] (color-frame coordinates)
      * @param ny Normalised Y in [0, 1]
