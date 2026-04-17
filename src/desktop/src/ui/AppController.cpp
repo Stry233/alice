@@ -266,6 +266,10 @@ void AppController::initialize() {
     autofocus_->setConfidenceThreshold(settings_->confidenceThreshold());
     autofocus_->setSmoothingAlpha(settings_->smoothingAlpha());
 
+    // Apply settings to depth sensor
+    realsense_->setMinValidDepth(settings_->depthMinDistance());
+    realsense_->setMaxValidDepth(settings_->depthMaxDistance());
+
     // Restore saved resolution settings
     realsense_->setStreamConfig(
         settings_->depthResW(), settings_->depthResH(), settings_->depthResFps(),
@@ -448,12 +452,45 @@ int AppController::motorOffset() const { return settings_->motorOffset(); }
 
 void AppController::broadcastSettings() {
     if (!syncServer_->hasClient()) return;
+    lastSettingsBroadcastMs_ = QDateTime::currentMSecsSinceEpoch();
     QJsonObject payload;
     payload["confidenceThreshold"] = settings_->confidenceThreshold();
     payload["smoothingAlpha"] = settings_->smoothingAlpha();
     payload["motorReverse"] = settings_->motorReverse();
     payload["motorOffset"] = settings_->motorOffset();
     syncServer_->broadcast(SyncMessage::settingsSync(payload));
+}
+
+// ── Depth sensor tuning ─────────────────────────────────────────────
+
+void AppController::setDepthMinDistance(int mm) {
+    realsense_->setMinValidDepth(mm);
+    settings_->setDepthMinDistance(mm);
+}
+void AppController::setDepthMaxDistance(int mm) {
+    realsense_->setMaxValidDepth(mm);
+    settings_->setDepthMaxDistance(mm);
+}
+void AppController::setDepthSmoothing(float r) {
+    realsense_->setDepthSmoothing(r);
+}
+int AppController::depthMinDistance() const { return settings_->depthMinDistance(); }
+int AppController::depthMaxDistance() const { return settings_->depthMaxDistance(); }
+float AppController::depthSmoothingValue() const { return realsense_->depthSmoothing(); }
+
+void AppController::resetAllSettings() {
+    settings_->resetAllSettings();
+    // Re-apply defaults to running components
+    autofocus_->setConfidenceThreshold(settings_->confidenceThreshold());
+    autofocus_->setSmoothingAlpha(settings_->smoothingAlpha());
+    motor_->setOffset(settings_->motorOffset());
+    motor_->setReversed(settings_->motorReverse());
+    realsense_->setMinValidDepth(settings_->depthMinDistance());
+    realsense_->setMaxValidDepth(settings_->depthMaxDistance());
+    realsense_->setDepthSmoothing(100.0f);
+    log("SYSTEM", "All settings reset to defaults");
+    emit autofocusStateChanged();
+    emit deviceStateChanged();
 }
 
 // ── Depth ────────────────────────────────────────────────────────────
@@ -979,18 +1016,26 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         break;
     }
     case SyncMessageType::ModeChange: {
+        // Suppress echoes: when WE broadcast a MODE_CHANGE, the Android
+        // client may echo it back after its own 200 ms window. Ignore
+        // inbound mode changes that arrive within our suppression period.
+        auto now = QDateTime::currentMSecsSinceEpoch();
+        if (now - lastModeBroadcastMs_ < kSyncEchoSuppressMs) break;
+
         QString mode = message.payload["mode"].toString();
-        bool enabled = message.payload["enabled"].toBool();
         int modeInt = 0;
         if (mode == "SINGLE_AUTO") modeInt = 1;
         else if (mode == "CONTINUOUS_AUTO") modeInt = 2;
         else if (mode == "FACE_TRACKING") modeInt = 3;
-        // Apply directly to controller — don't call setFocusMode/setAutofocusEnabled
-        // which would re-broadcast and create an infinite loop
+        // Derive enabled from mode (matches the Android convention:
+        // any non-manual mode is "enabled"). Don't use the payload's
+        // `enabled` field because Android may send it as false when
+        // the user hasn't explicitly toggled AF on the phone side.
+        bool enabled = modeInt > 0;
         autofocus_->setFocusModeInt(modeInt);
         autofocus_->setEnabled(enabled);
         emit autofocusStateChanged();
-        log("NETWORK", QString("Remote mode change: %1, enabled=%2").arg(mode).arg(enabled));
+        log("NETWORK", QString("Remote mode change: %1").arg(mode));
         break;
     }
     case SyncMessageType::CalibrationSync: {
@@ -1035,6 +1080,8 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         break;
     }
     case SyncMessageType::SettingsSync: {
+        auto now = QDateTime::currentMSecsSinceEpoch();
+        if (now - lastSettingsBroadcastMs_ < kSyncEchoSuppressMs) break;
         auto p = message.payload;
         if (p.contains("confidenceThreshold")) {
             float v = static_cast<float>(p["confidenceThreshold"].toDouble());
@@ -1110,6 +1157,7 @@ void AppController::updateDepthColormapGate() {
 
 void AppController::broadcastModeChange() {
     if (!syncServer_->hasClient()) return;
+    lastModeBroadcastMs_ = QDateTime::currentMSecsSinceEpoch();
 
     QString modeStr = "MANUAL";
     switch (autofocus_->focusMode()) {

@@ -109,9 +109,8 @@ target_include_directories(qrencode PUBLIC "${qrencode_SOURCE_DIR}")
 
 # Core library (algorithms + hardware, no UI dependency)
 add_library(alice_core STATIC
-    src/core/realsense/KalmanFilter.cpp
+    src/core/realsense/DepthEstimator.cpp
     src/core/autofocus/KalmanFilter2D.cpp
-    src/core/realsense/BilateralFilter.cpp
     src/core/autofocus/AutofocusMapping.cpp
     src/core/motor/MotorProtocol.cpp
     src/core/motor/MotorController.cpp

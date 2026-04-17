@@ -34,6 +34,23 @@ RealSenseManager::~RealSenseManager() {
     stop();
 }
 
+void RealSenseManager::setMinValidDepth(int mm) {
+    QMutexLocker lock(&estimatorParamsMutex_);
+    minValidDepth_ = std::max(100, mm);
+    estimator_.setValidRange(minValidDepth_, maxValidDepth_);
+}
+
+void RealSenseManager::setMaxValidDepth(int mm) {
+    QMutexLocker lock(&estimatorParamsMutex_);
+    maxValidDepth_ = std::max(minValidDepth_ + 100, mm);
+    estimator_.setValidRange(minValidDepth_, maxValidDepth_);
+}
+
+void RealSenseManager::setDepthSmoothing(float alpha) {
+    QMutexLocker lock(&estimatorParamsMutex_);
+    estimator_.setSmoothing(alpha);
+}
+
 void RealSenseManager::setMeasurementPosition(float x, float y) {
     const float cx = std::clamp(x, 0.0f, 1.0f);
     const float cy = std::clamp(y, 0.0f, 1.0f);
@@ -252,12 +269,27 @@ void RealSenseManager::captureLoop() {
                 int h = depthFrame.get_height();
                 auto data = reinterpret_cast<const uint16_t *>(depthFrame.get_data());
 
-                // Depth calculation runs every frame (cheap, needed for autofocus)
-                float depth = calculateDepth(data, w, h);
-                if (depth > 0.0f) {
-                    depth_ = depth;
-                    confidence_ = kalmanFilter_.getConfidence();
-                    emit depthChanged(depth, confidence_);
+                // Depth estimation: ROI median + confidence-weighted EMA.
+                // Runs every frame (cheap, ~49 pixels sorted) — autofocus
+                // needs the freshest possible reading.
+                float mx, my;
+                {
+                    QMutexLocker lock(&positionMutex_);
+                    mx = measureX_;
+                    my = measureY_;
+                }
+                DepthEstimator::Reading reading;
+                {
+                    // Serialize with parameter setters on the UI thread.
+                    // The critical section is ~50 μs (ROI sort dominates),
+                    // so slider drags never observe noticeable latency.
+                    QMutexLocker lock(&estimatorParamsMutex_);
+                    reading = estimator_.process(data, w, h, mx, my);
+                }
+                if (reading.isValid) {
+                    depth_ = reading.valueM;
+                    confidence_ = reading.confidence;
+                    emit depthChanged(reading.valueM, reading.confidence);
                 }
 
                 // Cache the aligned depth frame for on-demand point sampling
@@ -365,7 +397,7 @@ float RealSenseManager::depthAt(float nx, float ny) const {
         const uint16_t *row = depthCache_.data() + yy * depthCacheW_;
         for (int xx = x0; xx <= x1; ++xx) {
             const uint16_t d = row[xx];
-            if (d >= kMinValidDepth && d <= kMaxValidDepth) {
+            if (d >= minValidDepth_ && d <= maxValidDepth_) {
                 samples[n++] = d;
             }
         }
@@ -383,33 +415,6 @@ float RealSenseManager::depthAt(float nx, float ny) const {
     return static_cast<float>(median) / 1000.0f; // mm → m
 }
 
-float RealSenseManager::calculateDepth(const uint16_t *depthData, int width, int height) {
-    float mx, my;
-    {
-        QMutexLocker lock(&positionMutex_);
-        mx = measureX_;
-        my = measureY_;
-    }
-
-    int centerX = static_cast<int>(mx * width);
-    int centerY = static_cast<int>(my * height);
-    centerX = std::clamp(centerX, roiSize_, width - roiSize_ - 1);
-    centerY = std::clamp(centerY, roiSize_, height - roiSize_ - 1);
-
-    float filteredDepthMm = bilateralFilter_.filter(
-        depthData, width, height, centerX, centerY, 2);
-
-    if (filteredDepthMm < kMinValidDepth || filteredDepthMm > kMaxValidDepth) {
-        return 0.0f;
-    }
-
-    auto now = std::chrono::duration_cast<std::chrono::milliseconds>(
-                   std::chrono::steady_clock::now().time_since_epoch()).count();
-    float kalmanDepthMm = kalmanFilter_.update(filteredDepthMm, now);
-
-    return kalmanDepthMm / 1000.0f;
-}
-
 QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int height) {
     // Pre-built LUT: depth value (0..65535 mm) → RGB triple. Constructed
     // lazily on first call and reused for the process lifetime. 192 KiB fits
@@ -418,14 +423,14 @@ QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int
     static const std::array<std::array<uint8_t, 3>, 65536> kDepthLut = [] {
         std::array<std::array<uint8_t, 3>, 65536> lut{};
         constexpr int kMaxDisplayDepth = 5000; // mm; hot end of the turbo gradient
-        constexpr int kRangeMm = kMaxDisplayDepth - kMinValidDepth;
+        constexpr int kMinDisplay = kDefaultMinValidDepth;
+        constexpr int kRangeMm = kMaxDisplayDepth - kMinDisplay;
         for (int d = 0; d < 65536; ++d) {
             if (d == 0) {
                 lut[d] = {20, 20, 20}; // invalid / no-data → neutral gray
                 continue;
             }
-            // Integer remap of [kMinValidDepth, kMaxDisplayDepth] → [0, 255]
-            int idx = ((d - kMinValidDepth) * 255) / kRangeMm;
+            int idx = ((d - kMinDisplay) * 255) / kRangeMm;
             idx = std::clamp(idx, 0, 255);
             lut[d] = {kTurboR[idx], kTurboG[idx], kTurboB[idx]};
         }

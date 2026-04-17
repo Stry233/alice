@@ -104,6 +104,53 @@ Item {
                 }
             }
 
+            // Depth Sensor
+            SettingsCard {
+                title: "Depth Sensor"
+                Layout.fillHeight: true
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+
+                    RowLayout {
+                        Text { text: "Min Distance (mm)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true }
+                        Text { text: depthMinSpin.value.toString(); font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary }
+                    }
+                    AliceSpinBox {
+                        id: depthMinSpin
+                        from: 100; to: 2000; value: alice ? alice.depthMinDistance() : 200
+                        Layout.fillWidth: true
+                        onValueModified: { if (alice) alice.setDepthMinDistance(value) }
+                    }
+
+                    RowLayout {
+                        Text { text: "Max Distance (mm)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true }
+                        Text { text: depthMaxSpin.value.toString(); font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary }
+                    }
+                    AliceSpinBox {
+                        id: depthMaxSpin
+                        from: 1000; to: 10000; value: alice ? alice.depthMaxDistance() : 5000
+                        Layout.fillWidth: true
+                        onValueModified: { if (alice) alice.setDepthMaxDistance(value) }
+                    }
+
+                    RowLayout {
+                        Text { text: "Depth Smoothing"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true }
+                        Text { text: depthSmoothSlider.value.toFixed(0); font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary }
+                    }
+                    Text {
+                        text: "Kalman measurement noise (higher = smoother)"
+                        font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled
+                        Layout.fillWidth: true; wrapMode: Text.WordWrap
+                    }
+                    AliceSlider {
+                        id: depthSmoothSlider
+                        Layout.fillWidth: true; from: 10; to: 500; stepSize: 10
+                        value: alice ? alice.depthSmoothingValue() : 100
+                        onMoved: { if (alice) alice.setDepthSmoothing(value) }
+                    }
+                }
+            }
+
             SettingsCard {
                 title: "Video"
                 columnSpan: 2
@@ -124,6 +171,29 @@ Item {
                             onActivated: (index) => { if (!alice) return; let f = alice.captureCardFormats[index]; alice.setCaptureCardResolution(f.width, f.height, f.maxFps) } }
                         Rectangle { Layout.fillWidth: true; Layout.preferredHeight: width * 9 / 16; Layout.maximumHeight: Theme.dp(160); color: Theme.well; radius: Theme.radiusSm
                             VideoRenderer { anchors.centerIn: parent; width: Math.min(parent.width - 4, (parent.height - 4) * 16 / 9); height: width * 9 / 16; source: alice.captureFrame } }
+                    }
+                }
+            }
+
+            // System
+            SettingsCard {
+                title: "System"
+                Layout.alignment: Qt.AlignTop
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.preferredHeight: Theme.dp(40); radius: Theme.radiusSm
+                        color: resetMa.pressed ? Qt.darker(Theme.dangerMuted, 1.15)
+                             : (resetMa.containsMouse ? Theme.dangerMuted : "transparent")
+                        border.width: 1; border.color: resetMa.containsMouse ? Theme.danger : Qt.rgba(0.86, 0.22, 0.22, 0.4)
+                        Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                        Behavior on border.color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                        Text { anchors.centerIn: parent; text: "Reset All Settings"; font.pixelSize: Theme.fontSizeSmall; color: Theme.dangerText }
+                        MouseArea {
+                            id: resetMa; anchors.fill: parent; hoverEnabled: true; cursorShape: Qt.PointingHandCursor
+                            onClicked: { if (alice) alice.resetAllSettings() }
+                        }
                     }
                 }
             }

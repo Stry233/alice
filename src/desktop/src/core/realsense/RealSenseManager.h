@@ -11,19 +11,19 @@
 #include <atomic>
 #include <thread>
 
-#include "core/realsense/KalmanFilter.h"
-#include "core/realsense/BilateralFilter.h"
+#include "core/realsense/DepthEstimator.h"
 
 namespace alice {
 
 /**
  * RealSense depth camera manager.
  *
- * Wraps librealsense2 for depth/color streaming with ROI-based depth
- * calculation. Runs the capture loop on a detachable std::thread so
- * a device yank never blocks the Qt event loop. Depth is Kalman-filtered
- * and bilateral-smoothed before emission; colour frames are aligned to
- * depth and cached for face-detection consumers.
+ * Wraps librealsense2 for depth/color streaming with robust single-point
+ * depth estimation. Runs the capture loop on a detachable std::thread so
+ * a device yank never blocks the Qt event loop. Depth is processed by
+ * DepthEstimator (ROI median + confidence-weighted EMA with discontinuity
+ * detection); colour frames are aligned to depth and cached for
+ * face-detection consumers.
  */
 class RealSenseManager : public QObject {
     Q_OBJECT
@@ -77,12 +77,13 @@ public:
     QVariantList availableDepthModes() const;
     QVariantList availableColorModes() const;
 
-    static constexpr int kMinRoiSize = 8;
-    static constexpr int kMaxRoiSize = 24;
-    static constexpr int kDefaultRoiSize = 16;
+    static constexpr int kDefaultMinValidDepth = 200;
+    static constexpr int kDefaultMaxValidDepth = 10000;
 
-    static constexpr int kMinValidDepth = 200;
-    static constexpr int kMaxValidDepth = 10000;
+    void setMinValidDepth(int mm);
+    void setMaxValidDepth(int mm);
+    void setDepthSmoothing(float alpha);
+    float depthSmoothing() const { return estimator_.smoothing(); }
 
 public slots:
     void start();
@@ -100,7 +101,6 @@ private slots:
 
 private:
     void captureLoop();
-    float calculateDepth(const uint16_t *depthData, int width, int height);
     QImage colorizeDepth(const uint16_t *depthData, int width, int height);
 
     // Threading — uses std::thread (not QThread) so it can be detached
@@ -109,19 +109,23 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> connected_{false};
 
-    // Depth processing
-    KalmanFilter kalmanFilter_;
-    BilateralFilter bilateralFilter_;
+    // Depth processing: single-point estimator (ROI median + EMA with
+    // discontinuity detection). Owned by the capture thread; parameter
+    // setters from the UI thread use estimatorParamsMutex_.
+    DepthEstimator estimator_;
+    mutable QMutex estimatorParamsMutex_;
     mutable QMutex positionMutex_;
     float measureX_ = 0.5f;
     float measureY_ = 0.5f;
+
+    int minValidDepth_ = kDefaultMinValidDepth;
+    int maxValidDepth_ = kDefaultMaxValidDepth;
     // Lock-free mirrors of measureX_/measureY_ for QML binding reads at
     // ~60 Hz. Written under positionMutex_ in setMeasurementPosition and
     // read atomically from the UI thread to avoid taking the mutex from
     // two separate property getters per paint (measureX() and measureY()).
     std::atomic<float> measureXCached_{0.5f};
     std::atomic<float> measureYCached_{0.5f};
-    int roiSize_ = kDefaultRoiSize;
 
     // Current state
     std::atomic<float> depth_{0.0f};

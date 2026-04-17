@@ -199,44 +199,34 @@ fun AutofocusSettingsTab(
         // Calibrator Navigation Card
         CalibratorNavigationCard(navController = navController)
 
-        // Autofocus Control
+        // Autofocus Control — the mode selector IS the enable switch:
+        // any non-MF mode enables autofocus, MF disables it.
         SettingsCard(title = "Autofocus Control") {
-            SwitchSettingItem(
-                label = "Enable Autofocus",
-                checked = localAutofocusEnabled,
-                onCheckedChange = {
-                    android.util.Log.d("AutofocusSettingsTab", "Toggle AF: $it, mapping=${currentMapping?.name}")
-                    settingsManager.setAutofocusEnabled(it)
-                },
-                enabled = currentMapping != null
-            )
-
-            if (!localAutofocusEnabled && currentMapping == null) {
+            if (currentMapping == null) {
                 Text(
-                    text = "Load a mapping file first",
+                    text = "Load a mapping file to enable autofocus modes",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.error,
                     modifier = Modifier.padding(vertical = 4.dp)
                 )
             }
 
-            AnimatedVisibility(visible = localAutofocusEnabled && currentMapping != null) {
-                Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    val focusModeDisplayNames = mapOf(
-                        "MANUAL" to "MANUAL",
-                        "SINGLE_AUTO" to "AF-S",
-                        "CONTINUOUS_AUTO" to "AF-C",
-                        "FACE_TRACKING" to "AF-F"
-                    )
-                    val focusModeInternalNames = focusModeDisplayNames.entries.associate { (k, v) -> v to k }
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                val focusModeDisplayNames = mapOf(
+                    "MANUAL" to "MF",
+                    "SINGLE_AUTO" to "AF-S",
+                    "CONTINUOUS_AUTO" to "AF-C",
+                    "FACE_TRACKING" to "AF-F"
+                )
+                val focusModeInternalNames = focusModeDisplayNames.entries.associate { (k, v) -> v to k }
 
-                    DropdownSettingItem(
-                        label = "Focus Mode",
-                        value = focusModeDisplayNames[autofocusMode] ?: autofocusMode,
-                        options = listOf("MANUAL", "AF-S", "AF-C", "AF-F"),
-                        onValueChange = { displayName ->
-                            val internalName = focusModeInternalNames[displayName] ?: displayName
-                            settingsManager.setAutofocusMode(internalName)
+                DropdownSettingItem(
+                    label = "Focus Mode",
+                    value = focusModeDisplayNames[autofocusMode] ?: autofocusMode,
+                    options = listOf("MF", "AF-S", "AF-C", "AF-F"),
+                    onValueChange = { displayName ->
+                        val internalName = focusModeInternalNames[displayName] ?: displayName
+                        settingsManager.setAutofocusMode(internalName)
                         }
                     )
 
@@ -277,7 +267,7 @@ fun AutofocusSettingsTab(
         }
 
         // Focus Statistics
-        AnimatedVisibility(visible = localAutofocusEnabled && currentMapping != null && focusStats.totalFocusOperations > 0) {
+        AnimatedVisibility(visible = currentMapping != null && focusStats.totalFocusOperations > 0) {
             SettingsCard(title = "Focus Statistics") {
                 Row(
                     modifier = Modifier.fillMaxWidth(),

@@ -170,6 +170,17 @@ public:
     Q_INVOKABLE bool motorReversed() const;
     Q_INVOKABLE int motorOffset() const;
 
+    // Depth sensor tuning
+    Q_INVOKABLE void setDepthMinDistance(int mm);
+    Q_INVOKABLE void setDepthMaxDistance(int mm);
+    Q_INVOKABLE void setDepthSmoothing(float r);
+    Q_INVOKABLE int depthMinDistance() const;
+    Q_INVOKABLE int depthMaxDistance() const;
+    Q_INVOKABLE float depthSmoothingValue() const;
+
+    // System
+    Q_INVOKABLE void resetAllSettings();
+
     QString mappingName() const;
     Q_INVOKABLE QVariantList mappingPoints() const;
     Q_INVOKABLE void loadMappingFromFile(const QString &path);
@@ -361,6 +372,14 @@ private:
     int64_t lastDepthSendMs_ = 0;
     int64_t lastCaptureSendMs_ = 0;
     int64_t minFrameIntervalMs_ = 33; // ~30fps max per stream
+
+    // Timestamp-based echo suppression. When we broadcast MODE_CHANGE or
+    // SETTINGS_SYNC, the Android client may echo them back after its own
+    // 200 ms suppression window. We ignore inbound messages of the same
+    // type for 500 ms after our last outbound broadcast.
+    int64_t lastModeBroadcastMs_ = 0;
+    int64_t lastSettingsBroadcastMs_ = 0;
+    static constexpr int64_t kSyncEchoSuppressMs = 500;
 
     // Busy flags: skip frames while a previous encode for the same stream
     // is still in flight, so we never pile up work on the thread pool.

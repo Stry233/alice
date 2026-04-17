@@ -41,7 +41,7 @@ Item {
                 id: logArea
                 readOnly: true
                 selectByMouse: true
-                wrapMode: TextArea.NoWrap
+                wrapMode: TextArea.Wrap
                 font.family: Theme.fontFamilyMono
                 font.pixelSize: Theme.fontSizeMicro
                 color: Theme.textSecondary

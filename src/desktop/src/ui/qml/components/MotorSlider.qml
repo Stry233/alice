@@ -17,8 +17,19 @@ ColumnLayout {
         from: 0
         to: 4095
         stepSize: 1
-        value: motorSlider.motorPos
         live: true
+
+        // Re-establish the binding whenever the user isn't actively
+        // dragging. Without this, any imperative write to slider.value
+        // (preset click, scroll wheel) breaks the reactive binding to
+        // motorSlider.motorPos, so subsequent motor moves from AF-C,
+        // AF-F, or remote sync would no longer update the slider.
+        Binding {
+            target: slider
+            property: "value"
+            value: motorSlider.motorPos
+            when: !slider.pressed
+        }
 
         onMoved: motorSlider.motorMoved(Math.round(value))
 
