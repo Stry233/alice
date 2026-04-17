@@ -11,9 +11,10 @@ class CaptureCardManager;
 
 /**
  * Coordinates sequential device discovery and connection.
- * Ported from DeviceCoordinationManager.kt.
+ * Owns the lifecycle of motor, depth, and capture-card managers — auto-discovery,
+ * health-check watchdogs, and user-initiated restart/disconnect/reconnect.
  *
- * Connection order: Motor → RealSense (matching Android for consistency).
+ * Connection order: Motor -> RealSense (matching Android for consistency).
  */
 class DeviceCoordinator : public QObject {
     Q_OBJECT

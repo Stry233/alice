@@ -679,13 +679,10 @@ Item {
                                 onNormXChanged: stdLockPulse.restart()
                                 onNormYChanged: stdLockPulse.restart()
 
-                                // Dark outline (3px wide, behind)
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
-                                // Bright inner (1px, on top)
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 22; height: 1; color: "#ffffff" }
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 22; color: "#ffffff" }
-                                // Center ring — animated on lock confirmation
                                 Rectangle {
                                     id: stdInnerRing
                                     anchors.centerIn: parent; width: 8; height: 8; radius: 4

@@ -44,8 +44,7 @@ Item {
             readonly property real bw : modelData.w * root.vidW
             readonly property real bh : modelData.h * root.vidH
 
-            // Tracking state (mirrors TrackingState enum in SubjectTracker.h):
-            //   0 = EyeLocked, 1 = FaceOnly, 2 = Predicted, 3 = Lost
+            // Tracking state: 0 = EyeLocked, 1 = FaceOnly, 2 = Predicted, 3 = Lost
             readonly property bool isPredicted: trackState === 2
             readonly property bool isEyeLocked: trackState === 0
 

@@ -17,7 +17,8 @@ struct RawFaceDetection {
 
 /**
  * ONNX-based YOLO face detector.
- * Ported from OnnxFaceDetector.kt.
+ * Runs ONNX Runtime inference on YOLO-face models with multi-EP support (CPU, CUDA,
+ * CoreML), non-maximum suppression, and optional 5-point landmark extraction.
  *
  * Supports YOLOv8n/v10n/v11n face models from HuggingFace.
  * Input: 640x640, output auto-detected (transposed/non-transposed, center/corner format).

@@ -7,8 +7,11 @@ namespace alice {
 
 /**
  * Bilateral spatial filter for depth data.
- * Provides edge-preserving smoothing to reduce noise while maintaining sharp boundaries.
- * Ported from BilateralDepthFilter in KalmanDepthFilter.kt.
+ *
+ * Provides edge-preserving smoothing that reduces noise at flat surfaces
+ * while preserving sharp depth discontinuities (e.g. foreground/background
+ * edges). Uses a precomputed 9x9 spatial-weight LUT to avoid per-sample
+ * exp() calls in the inner loop.
  */
 class BilateralFilter {
 public:

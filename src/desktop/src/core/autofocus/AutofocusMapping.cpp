@@ -52,7 +52,6 @@ std::optional<int> AutofocusMapping::getMotorPosition(float depth) const {
     std::sort(sorted.begin(), sorted.end(),
               [](const MappingPoint &a, const MappingPoint &b) { return a.depth < b.depth; });
 
-    // Clamp to endpoints
     if (depth <= sorted.front().depth) return sorted.front().motorPosition;
     if (depth >= sorted.back().depth)  return sorted.back().motorPosition;
 

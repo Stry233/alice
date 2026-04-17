@@ -46,10 +46,8 @@ class AutofocusCoordinator(
     // Primary-face handoff hysteresis. In AF-F we don't want the focus point
     // to flicker between two similarly-scored faces every frame, so we keep
     // the last-chosen face "sticky": a challenger only steals the primary
-    // slot if its score beats the incumbent by at least PRIMARY_SCORE_HYST.
-    // Resets on manual tap selection and on leaving FACE_TRACKING mode.
-    //
-    // Mirrors the desktop AppController's kPrimaryHysteresis = 1.15f.
+    // slot if its score beats the incumbent by at least 15 %. Resets on
+    // manual tap selection and on leaving FACE_TRACKING mode.
     private var lastPrimaryFaceId: Int? = null
     private val PRIMARY_SCORE_HYSTERESIS = 1.15f
 

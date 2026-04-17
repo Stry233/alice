@@ -6,7 +6,10 @@ import kotlinx.serialization.json.Json
 
 /**
  * Network sync protocol message types and serialization.
- * Matches the desktop C++ implementation for bidirectional sync.
+ *
+ * All messages are JSON-encoded text frames over the WebSocket.
+ * Binary frames carry video data: a 1-byte frame-type tag followed
+ * by a 4-byte timestamp and the JPEG/WebP payload.
  */
 
 private val json = Json {

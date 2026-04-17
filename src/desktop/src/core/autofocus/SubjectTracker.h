@@ -42,7 +42,9 @@ struct TrackedFace {
 
 /**
  * Multi-face tracker with per-subject Kalman filtering.
- * Ported from SubjectTracker.kt.
+ * Matches incoming detections to existing tracks via IoU and distance thresholds,
+ * predicts positions through brief occlusions with Kalman prediction, re-acquires
+ * ghost tracks using histogram correlation, and ranks subjects by a weighted score.
  */
 class SubjectTracker : public QObject {
     Q_OBJECT

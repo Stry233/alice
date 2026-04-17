@@ -23,8 +23,7 @@ class MotorSerialHandler(
         private const val TAG = "MotorSerialHandler"
 
         // Defensive bounds on responseBuffer so a firmware glitch streaming
-        // non-newline-terminated data can't grow the buffer unboundedly and
-        // OOM the app. Matches the cap on the desktop MotorController.
+        // non-newline-terminated data can't grow the buffer unboundedly.
         private const val MAX_RESPONSE_BUFFER_BYTES = 8 * 1024
         private const val RESPONSE_BUFFER_TRIM_TAIL = 1 * 1024
     }

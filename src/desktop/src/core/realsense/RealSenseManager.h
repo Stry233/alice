@@ -18,8 +18,12 @@ namespace alice {
 
 /**
  * RealSense depth camera manager.
- * Wraps librealsense2 for depth/color streaming with ROI-based depth calculation.
- * Ported from RealSenseManager.kt + RealSenseDepthCalculator.kt.
+ *
+ * Wraps librealsense2 for depth/color streaming with ROI-based depth
+ * calculation. Runs the capture loop on a detachable std::thread so
+ * a device yank never blocks the Qt event loop. Depth is Kalman-filtered
+ * and bilateral-smoothed before emission; colour frames are aligned to
+ * depth and cached for face-detection consumers.
  */
 class RealSenseManager : public QObject {
     Q_OBJECT

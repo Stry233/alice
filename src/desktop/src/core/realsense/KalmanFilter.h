@@ -9,8 +9,9 @@
 namespace alice {
 
 /**
- * 1D Kalman filter for depth tracking with adaptive noise estimation.
- * Ported from KalmanDepthFilter.kt — preserves all parameters exactly.
+ * 1D scalar Kalman filter for depth (meters).
+ * Smooths noisy per-frame depth measurements and provides a confidence estimate
+ * based on innovation magnitude.
  */
 class KalmanFilter {
 public:

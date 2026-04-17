@@ -23,9 +23,12 @@ class SettingsManager;
 class SyncServer;
 
 /**
- * Central QML ↔ C++ bridge. Analogous to CameraViewModel in Android.
- * Orchestrates all hardware, autofocus, and network components.
- * Exposed to QML as the "alice" context property.
+ * Central QML ↔ C++ bridge.
+ *
+ * Owns every hardware manager (RealSense, motor, capture card), the
+ * autofocus pipeline, face detection, network sync, and settings
+ * persistence. Exposed to QML as the "alice" context property so
+ * every UI binding resolves through a single, well-defined surface.
  */
 class AppController : public QObject {
     Q_OBJECT

@@ -529,7 +529,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     // Whether the capture card is operational (local OR remote via sync).
-    // Mirrors effectiveMotorConnected / effectiveRealSenseConnected for symmetry.
+    // Whether the capture card is operational (local OR remote via sync).
     val effectiveCaptureCardConnected: StateFlow<Boolean> by lazy {
         combine(
             cameraConnectionState,

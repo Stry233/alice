@@ -61,7 +61,6 @@ Rectangle {
         }
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-        // Rows
         ListView {
             Layout.fillWidth: true; Layout.fillHeight: true; clip: true; model: points
             delegate: Rectangle {

@@ -105,7 +105,6 @@ Item {
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-        // Content
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

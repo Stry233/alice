@@ -164,7 +164,6 @@ void MotorController::onReadyRead() {
         lineBuffer_ = lineBuffer_.right(kLineBufferTrimTail);
     }
 
-    // Process complete lines
     int newlineIdx;
     while ((newlineIdx = lineBuffer_.indexOf('\n')) >= 0) {
         QString line = lineBuffer_.left(newlineIdx).trimmed();

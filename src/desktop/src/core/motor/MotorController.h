@@ -14,7 +14,11 @@ namespace alice {
 
 /**
  * Motor controller for CDC-ACM serial communication with nRF52840 dongle.
- * Ported from MotorControlManager.kt + MotorSerialHandler.kt.
+ *
+ * Discovers the dongle by VID/PID or CDC-ACM port name, opens a serial
+ * connection at 115200 baud, and translates high-level setPosition() calls
+ * into the wire protocol (with optional offset, reversal, and EMA smoothing).
+ * Auto-reconnects on device yank via a 2-second retry timer.
  */
 class MotorController : public QObject {
     Q_OBJECT

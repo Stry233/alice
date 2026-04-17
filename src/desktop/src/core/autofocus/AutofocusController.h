@@ -19,7 +19,9 @@ Q_NAMESPACE
 
 /**
  * Main autofocus controller.
- * Ported from AutofocusController.kt — identical focus logic and parameters.
+ * Focus-mode state machine supporting Manual, AF-S, AF-C, and AF-F (face-tracking).
+ * Maps depth measurements to motor positions via AutofocusMapping, handles tap-to-focus
+ * triggers, and delivers debounced target positions to the motor controller.
  */
 class AutofocusController : public QObject {
     Q_OBJECT

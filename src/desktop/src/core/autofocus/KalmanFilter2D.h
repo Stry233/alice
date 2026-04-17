@@ -6,8 +6,9 @@
 namespace alice {
 
 /**
- * 2D Kalman filter for face tracking with constant-velocity model.
- * Ported from SubjectTracker.kt inner KalmanFilter2D class.
+ * 2D constant-velocity Kalman filter for face position tracking.
+ * Predicts normalised (x, y) coordinates one timestep ahead and fuses incoming
+ * detections to produce a smooth trajectory.
  *
  * State vector: [x, y, vx, vy]
  * Measurement vector: [x, y]

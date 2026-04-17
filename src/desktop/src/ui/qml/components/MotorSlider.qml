@@ -34,7 +34,6 @@ ColumnLayout {
         }
     }
 
-    // Tight gap between slider and numbers
     RowLayout {
         Layout.fillWidth: true
         Layout.topMargin: Theme.dp(2)
@@ -60,7 +59,6 @@ ColumnLayout {
         }
     }
 
-    // Larger gap before buttons
     Item {
         Layout.fillWidth: true
         implicitHeight: btnRow.height

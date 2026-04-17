@@ -176,7 +176,6 @@ std::vector<RawFaceDetection> FaceDetector::detect(const QImage &image) {
         }
     }
 
-    // Run inference
     try {
         Ort::MemoryInfo memInfo = Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault);
         std::array<int64_t, 4> inputShape = {1, 3, kInputSize, kInputSize};
