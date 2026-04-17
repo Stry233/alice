@@ -55,8 +55,8 @@ QtObject {
     readonly property int radiusLg:   dp(6)
 
     // ── Typography (2x HTML CSS values) ────────────────────────────
-    readonly property string fontFamily:     "Inter"
-    readonly property string fontFamilyMono: "RobotoMono"
+    readonly property string fontFamily:     "Alice Inter"
+    readonly property string fontFamilyMono: "Alice Mono"
     readonly property int fontSizeH1:      dp(36)
     readonly property int fontSizeH2:      dp(28)
     readonly property int fontSizeH3:      dp(24)

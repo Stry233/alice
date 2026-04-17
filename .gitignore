@@ -205,7 +205,14 @@ cython_debug/
 .pypirc
 
 
-# Internal release/packaging (not committed)
-src/desktop/release/
+# Packaging build artifacts — the scripts / templates in
+# src/desktop/release/ ARE version-controlled; only the generated
+# installers and staging dirs are excluded.
 *.AppImage
 *.tar.gz
+*.deb
+*.rpm
+src/desktop/build/AppDir/
+src/desktop/build/rpmbuild/
+src/desktop/build/AliceStudio-*/
+src/desktop/build/alice-studio_*/

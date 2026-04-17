@@ -5,7 +5,7 @@
 **A**utofocus **L**ens **I**nterface for **C**inema **E**quipment
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20Windows%20%7C%20macOS-brightgreen)](#hardware-requirements)
+[![Platform](https://img.shields.io/badge/platform-Android%20%7C%20Linux%20%7C%20Windows-brightgreen)](#hardware-requirements)
 [![Qt](https://img.shields.io/badge/Qt-6.5+-41CD52?logo=qt&logoColor=white)](#alice-studio-desktop)
 
 Alice turns any camera into an autofocus cinema rig. It pairs a depth sensor with a wireless focus motor to deliver tap-to-focus, continuous autofocus, and real-time face/eye tracking — no camera firmware integration required. Works with any manual or adapted lens.
@@ -34,7 +34,7 @@ Alice is a three-component system:
 | Component | Description |
 |:----------|:------------|
 | **Android App** | Mobile control surface. Runs face detection (ONNX YOLO + ML Kit), depth processing, and motor control over USB. Can operate standalone or pair with Alice Studio. |
-| **Alice Studio** | Qt 6 desktop application for Linux, Windows, and macOS. Full-featured monitoring station with live camera preview, depth overlay, autofocus pipeline, calibration tools, and system telemetry. |
+| **Alice Studio** | Qt 6 desktop application for Linux and Windows. Full-featured monitoring station with live camera preview, depth overlay, autofocus pipeline, calibration tools, and system telemetry. |
 | **Dongle Firmware** | Zephyr RTOS on nRF52840. Bridges USB CDC-ACM serial to IEEE 802.15.4 wireless to control the Tilta motor. |
 
 When both apps are running, they pair over LAN via WebSocket. The desktop streams the camera feed and depth overlay to the phone, and both sides can control the motor and autofocus modes in real time.
@@ -59,7 +59,7 @@ When both apps are running, they pair over LAN via WebSocket. The desktop stream
 - **OPS mode** — live camera feed (zoomable), depth preview with measurement reticle, motor position slider, face/eye tracking overlay, real-time histogram, system telemetry
 - **CFG mode** — lens calibration with interactive graph, resolution and quality settings, LAN sync management, transmission quality sliders
 - **Hardware identity** — status badges show real device names (from USB/RealSense descriptors), uptime, and per-device restart/disconnect/reconnect controls
-- **GPU acceleration** — face detection runs on TensorRT, CUDA, DirectML, or CoreML depending on the platform; CPU fallback runs at 60+ fps on desktop
+- **GPU acceleration** — face detection runs on TensorRT, CUDA, or DirectML depending on the platform; CPU fallback runs at 60+ fps on desktop
 - **Cross-platform sync** — QR-code pairing with the Android app over WebSocket; streams camera, depth, and face data bidirectionally with per-stream quality control
 
 ### Android App
@@ -79,7 +79,7 @@ When both apps are running, they pair over LAN via WebSocket. The desktop stream
 | Component | Requirement | Notes |
 |:----------|:------------|:------|
 | **Phone / Tablet** | Android 8.0+ (API 26) | USB 3.0 recommended for full RGB+depth streaming. |
-| **Desktop** | Linux, Windows, or macOS | Qt 6.5+, C++17 compiler. See [BUILD.md](BUILD.md). |
+| **Desktop** | Linux or Windows | Qt 6.5+, C++17 compiler. See [BUILD.md](BUILD.md). |
 | **Depth Camera** | [Intel RealSense](https://store.realsenseai.com/) D415 / D435 / D455 / D405 | Any D4xx series. Used models work fine. |
 | **Focus Motor** | [Tilta Nucleus Nano II](https://tilta.com/shop/nucleus-nano-ii-wireless-lens-control-system) | Hand controller needed only for initial pairing. |
 | **Wireless Bridge** | [nRF52840 USB Dongle](https://www.amazon.com/NRF52840-DONGLE-Micro-Dev-Kit-PCA10059/dp/B0F2J95GDR) | Flashed with Alice firmware. |

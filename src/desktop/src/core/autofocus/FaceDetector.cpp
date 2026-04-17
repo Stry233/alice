@@ -347,7 +347,7 @@ FaceDetector::~FaceDetector() = default;
 bool FaceDetector::loadModel(const QString &) { emit error("ONNX Runtime not available"); return false; }
 std::vector<RawFaceDetection> FaceDetector::detect(const QImage &) { return {}; }
 
-std::vector<RawFaceDetection> FaceDetector::postprocess(const float*, int, int, bool, float, float) { return {}; }
+std::vector<RawFaceDetection> FaceDetector::postprocess(const float*, int, int, bool, float, float, int, int) { return {}; }
 float FaceDetector::computeIoU(const QRectF&, const QRectF&) { return 0; }
 std::vector<RawFaceDetection> FaceDetector::nonMaxSuppression(std::vector<RawFaceDetection>&) { return {}; }
 

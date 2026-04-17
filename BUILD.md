@@ -129,7 +129,7 @@ The app will auto-discover connected hardware (RealSense, motor dongle, capture 
 Alice Studio's face tracker runs the YOLO-face ONNX model through ONNX Runtime. It auto-selects the fastest execution provider your ONNX Runtime install was built with, in this priority order:
 
 ```
-TensorRT  →  CUDA  →  DirectML (Windows)  →  CoreML (macOS)  →  CPU
+TensorRT  →  CUDA  →  DirectML (Windows)  →  CPU
 ```
 
 At startup the log line reads something like `Face detector loaded: yolov11s-face.onnx (EP=CUDA)`. If you're stuck on `(EP=CPU)` and want hardware acceleration, swap your ONNX Runtime build — **no need to recompile Alice**, just point it at a different library at launch time:
@@ -172,19 +172,6 @@ Copy `onnxruntime.dll` and `DirectML.dll` next to `AliceStudio.exe` (or put them
 **Windows · NVIDIA only, maximum perf**
 
 Use the `onnxruntime-win-x64-gpu-*.zip` release instead for TensorRT+CUDA. Same `ONNXRUNTIME_ROOT` flow; ship `onnxruntime.dll`, `onnxruntime_providers_cuda.dll`, `onnxruntime_providers_tensorrt.dll`, and `onnxruntime_providers_shared.dll` next to the exe.
-
-**macOS · Apple Silicon**
-
-```bash
-# CoreML support requires an ONNX Runtime build with --use_coreml. The
-# stock Homebrew formula is CPU-only; either build from source or grab a
-# prebuilt release.
-cmake .. -DCMAKE_PREFIX_PATH=/opt/homebrew/Cellar/qt@6/6.6.0 \
-         -DONNXRUNTIME_ROOT=/opt/onnxruntime-osx-arm64-coreml
-cmake --build .
-```
-
-The CoreML EP routes supported ops to the Apple Neural Engine + GPU and falls back to CPU for the rest — no extra runtime flags needed.
 
 **Verifying which EP is active**
 

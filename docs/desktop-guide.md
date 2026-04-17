@@ -1,6 +1,6 @@
 # Alice Studio Guide
 
-Alice Studio is the Qt 6 desktop application for Linux, Windows, and macOS.
+Alice Studio is the Qt 6 desktop application for Linux and Windows.
 
 <!-- PLACEHOLDER: res/studio-ops-mode.png — OPS view with camera feed,
      depth overlay, face tracking, motor slider, and telemetry -->
@@ -87,7 +87,7 @@ Alice Studio opens at 73% of your screen width with a 16:9 aspect ratio, capped 
 Face detection runs through ONNX Runtime. Alice auto-selects the fastest available execution provider:
 
 ```
-TensorRT > CUDA > DirectML (Windows) > CoreML (macOS) > CPU
+TensorRT > CUDA > DirectML (Windows) > CPU
 ```
 
 The startup log shows which EP is active: `Face detector loaded: yolov11s-face.onnx (EP=CUDA)`. See [BUILD.md](../BUILD.md#gpu-acceleration-face-tracking) for instructions on swapping to a GPU-enabled ONNX Runtime build.

@@ -21,7 +21,41 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Svg Quick QuickControls2 Q
 qt_standard_project_setup(REQUIRES 6.5)
 
 # Intel RealSense SDK
-find_package(realsense2 REQUIRED)
+#
+# On Linux, librealsense2-dev ships realsense2Config.cmake so find_package
+# works directly. The Windows SDK installer (Intel.RealSense.SDK-WIN10-*.exe)
+# does NOT ship a CMake config — it only drops headers + a .lib under
+# "C:/Program Files/RealSense SDK 2.0". Fall back to manual discovery in
+# that case, mirroring the ONNX Runtime pattern below. Override via
+# REALSENSE2_ROOT (cache or env var) for non-default install prefixes.
+find_package(realsense2 QUIET)
+if(NOT realsense2_FOUND)
+    set(_rs_hint_root "${REALSENSE2_ROOT}")
+    if(NOT _rs_hint_root AND DEFINED ENV{REALSENSE2_ROOT})
+        set(_rs_hint_root "$ENV{REALSENSE2_ROOT}")
+    endif()
+    if(NOT _rs_hint_root AND WIN32)
+        set(_rs_hint_root "C:/Program Files/RealSense SDK 2.0")
+    endif()
+
+    find_library(REALSENSE2_LIB realsense2
+        HINTS "${_rs_hint_root}/lib/x64" "${_rs_hint_root}/lib")
+    find_path(REALSENSE2_INCLUDE librealsense2/rs.hpp
+        HINTS "${_rs_hint_root}/include")
+    if(REALSENSE2_LIB AND REALSENSE2_INCLUDE)
+        add_library(realsense2::realsense2 INTERFACE IMPORTED)
+        set_target_properties(realsense2::realsense2 PROPERTIES
+            INTERFACE_LINK_LIBRARIES "${REALSENSE2_LIB}"
+            INTERFACE_INCLUDE_DIRECTORIES "${REALSENSE2_INCLUDE}")
+        set(realsense2_FOUND TRUE)
+        message(STATUS "RealSense SDK: ${REALSENSE2_LIB}")
+    else()
+        message(FATAL_ERROR
+            "Intel RealSense SDK not found. Install it from "
+            "https://github.com/IntelRealSense/librealsense/releases "
+            "or set -DREALSENSE2_ROOT=<path>.")
+    endif()
+endif()
 
 # ONNX Runtime
 #
@@ -85,6 +119,14 @@ endif()
 
 # nlohmann/json (header-only)
 include(FetchContent)
+
+# CMake 4.x removed compatibility with pre-3.5 policies, but libqrencode
+# v4.1.1 still declares cmake_minimum_required(VERSION 2.8.12). Inject
+# the minimum policy version globally so fetched dependencies configure
+# cleanly regardless of host CMake version.
+set(CMAKE_POLICY_VERSION_MINIMUM 3.5 CACHE STRING
+    "Minimum policy version applied to fetched third-party CMake projects" FORCE)
+
 FetchContent_Declare(
     nlohmann_json
     GIT_REPOSITORY https://github.com/nlohmann/json.git
@@ -124,9 +166,15 @@ add_library(alice_core STATIC
     src/core/system/SystemMonitor.cpp
 )
 target_include_directories(alice_core PUBLIC src)
+# Restrict these to CXX compiles only. Without the generator-expression
+# guard, CMake also feeds them to MinGW windres (when alice_studio.rc is
+# part of AliceStudio transitively linking alice_core), and windres's
+# preprocessor mangles the \"-escaped string values into bare `-\` flags
+# that gcc rejects. COMPILE_LANGUAGE:CXX excludes the RC language while
+# preserving the definitions for every .cpp compile.
 target_compile_definitions(alice_core PUBLIC
-    ALICE_APP_VERSION="${PROJECT_VERSION}"
-    ALICE_APP_NAME="Alice Studio"
+    $<$<COMPILE_LANGUAGE:CXX>:ALICE_APP_VERSION="${PROJECT_VERSION}">
+    $<$<COMPILE_LANGUAGE:CXX>:ALICE_APP_NAME="Alice Studio">
 )
 target_link_libraries(alice_core PUBLIC
     Qt6::Core
@@ -224,7 +272,54 @@ target_link_libraries(alice_ui PUBLIC
 )
 
 # Main executable
-qt_add_executable(AliceStudio src/main.cpp)
+#
+# ALICE_WIN32_GUI controls whether Windows spawns a console alongside the
+# GUI window. Default OFF — developers want the console to see qDebug()
+# output. Release packaging sets it ON (see release/package.sh + the
+# Windows section of release/PACKAGING.md) so end users don't see a stray
+# black terminal behind the app. No-op on non-Windows platforms.
+option(ALICE_WIN32_GUI "Link AliceStudio as a Windows GUI app (no console window)" OFF)
+
+# On Windows, embed an icon + VERSIONINFO (CompanyName, ProductName,
+# FileVersion, ...) into AliceStudio.exe via a resource file. Without
+# this, File Explorer / Start Menu / Task Manager show a default exe
+# icon and empty publisher metadata. src/alice_studio.rc.in is
+# configure-time-templated with PROJECT_VERSION + the absolute path to
+# the committed .ico so CMake only needs to run once for the metadata
+# to be current.
+#
+# The .rc compiles in its own OBJECT library so windres does NOT inherit
+# the main target's include dirs or compile-definitions. MinGW's windres
+# invokes gcc as a preprocessor, and gcc chokes on include paths
+# containing " - " (OneDrive folder names, etc.) — it fragments the
+# argument on the dash and emits "unrecognized command-line option '-\'".
+# Isolating the .rc keeps that command line clean of non-essential -I
+# and -D flags. The object is plumbed into AliceStudio via
+# $<TARGET_OBJECTS:...>, adding exactly the compiled resource section.
+set(ALICE_WIN32_RC_OBJECTS "")
+if(WIN32)
+    set(ALICE_ICON_PATH "${CMAKE_CURRENT_SOURCE_DIR}/assets/icons/alice_app_icon.ico")
+    configure_file(
+        "${CMAKE_CURRENT_SOURCE_DIR}/src/alice_studio.rc.in"
+        "${CMAKE_CURRENT_BINARY_DIR}/alice_studio.rc"
+        @ONLY)
+    add_library(alice_winres OBJECT "${CMAKE_CURRENT_BINARY_DIR}/alice_studio.rc")
+    # Global CMAKE_AUTOMOC ON (set above) adds an autogen include path
+    # to every target, including this RC-only OBJECT lib — and that
+    # path flows into windres's preprocessor, which then breaks on the
+    # ` - ` in the OneDrive folder name. Turn off all three AUTO* here
+    # so windres gets an empty -I list.
+    set_target_properties(alice_winres PROPERTIES
+        AUTOMOC OFF
+        AUTORCC OFF
+        AUTOUIC OFF)
+    set(ALICE_WIN32_RC_OBJECTS "$<TARGET_OBJECTS:alice_winres>")
+endif()
+
+qt_add_executable(AliceStudio src/main.cpp ${ALICE_WIN32_RC_OBJECTS})
+if(WIN32 AND ALICE_WIN32_GUI)
+    set_target_properties(AliceStudio PROPERTIES WIN32_EXECUTABLE TRUE)
+endif()
 target_link_libraries(AliceStudio PRIVATE
     alice_ui
     alice_uiplugin
