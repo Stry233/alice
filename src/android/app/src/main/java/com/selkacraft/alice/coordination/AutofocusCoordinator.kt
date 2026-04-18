@@ -294,10 +294,11 @@ class AutofocusCoordinator(
             faceDetectionProcessor.faceDetectionState.collect { faceState ->
                 autofocusController.updateFaceDetectionState(faceState)
 
-                // Update RealSense measurement position based on selected face's focus point
-                // This now uses eye position when available (DSLR-quality Eye AF).
-                // pickPrimaryWithHysteresis keeps the primary "sticky" between
-                // near-tied candidates so the measurement point doesn't flicker.
+                // Update RealSense measurement position based on the selected face's focus point.
+                // Eye position is preferred over face-center when available so the measurement
+                // tracks the subject's eyes directly. pickPrimaryWithHysteresis keeps the
+                // primary face "sticky" between near-tied candidates so the measurement point
+                // doesn't flicker.
                 if (autofocusController.state.value.mode == FocusMode.FACE_TRACKING) {
                     val targetFace = pickPrimaryWithHysteresis(faceState)
                     if (targetFace != null) {

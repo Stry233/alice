@@ -39,9 +39,6 @@ ApplicationWindow {
 
     Component.onCompleted: {
         Theme.scaleFactor = alice ? alice.uiScaleFactor() : 1.0
-        console.log("[Alice] Screen:", Screen.width + "x" + Screen.height,
-                    "DPR:", Screen.devicePixelRatio,
-                    "uiScale:", Theme.scaleFactor.toFixed(2))
         if (alice) alice.initialize()
     }
 

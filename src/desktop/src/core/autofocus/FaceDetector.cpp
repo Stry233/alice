@@ -250,9 +250,8 @@ std::vector<RawFaceDetection> FaceDetector::postprocess(
                               : data[i * numFeatures + feature];
         };
 
-        // YOLO pre-NMS outputs always use the center format (cx, cy, w, h).
-        // The previous "usesCornerFormat for 5 features" heuristic was wrong
-        // and produced negative widths / tiny boxes anchored at the origin.
+        // YOLO pre-NMS outputs are always in center format (cx, cy, w, h),
+        // regardless of the number of features per detection.
         const float cx = getValue(0);
         const float cy = getValue(1);
         const float w  = getValue(2);

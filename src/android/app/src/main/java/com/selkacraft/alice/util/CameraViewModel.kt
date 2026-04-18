@@ -200,7 +200,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                                 if (wasConnected != camConnected) camChanged = true
                             }
 
-                            // Re-request streams when a device reconnects (was off, now on)
+                            // Re-request streams whenever a remote device transitions to connected.
                             if ((rsChanged && _remoteRealSenseConnected.value) ||
                                 (camChanged && _remoteCaptureConnected)) {
                                 syncClient.sendStreamControl(

@@ -23,13 +23,8 @@ Alice turns any camera into an autofocus cinema rig. It pairs a depth sensor wit
 
 Alice is a three-component system:
 
-<!-- PLACEHOLDER: res/architecture-diagram.png — block diagram showing:
-     [Android App] <--WebSocket--> [Alice Studio (Desktop)]
-                                        |
-     [nRF52840 Dongle] <--802.15.4--> [Tilta Motor]
-                                        |
-     [Intel RealSense] --USB--> [Android / Desktop]
-     [Capture Card] --HDMI/USB--> [Android / Desktop]  -->
+![Family](res/family.png)
+
 
 | Component | Description |
 |:----------|:------------|
@@ -37,13 +32,13 @@ Alice is a three-component system:
 | **Alice Studio** | Qt 6 desktop application for Linux and Windows. Full-featured monitoring station with live camera preview, depth overlay, autofocus pipeline, calibration tools, and system telemetry. |
 | **Dongle Firmware** | Zephyr RTOS on nRF52840. Bridges USB CDC-ACM serial to IEEE 802.15.4 wireless to control the Tilta motor. |
 
-When both apps are running, they pair over LAN via WebSocket. The desktop streams the camera feed and depth overlay to the phone, and both sides can control the motor and autofocus modes in real time.
+You can use either Android or Studio client based on your need. When both apps are running, they pair over LAN via WebSocket. The desktop streams the camera feed and depth overlay to the phone, and both sides can control the motor and autofocus modes in real time.
 
 ## Features
 
 ### Autofocus Modes
 
-| Mode | Shortcut | Description |
+| Mode | Shortcut on Studio | Description |
 |:-----|:---------|:------------|
 | **Manual (MF)** | `M` | Direct motor slider control. Full 0-4095 position range with 5 preset buttons. |
 | **Single (AF-S)** | `S` | Tap to measure depth and focus once. Locks until next tap. |
@@ -52,9 +47,11 @@ When both apps are running, they pair over LAN via WebSocket. The desktop stream
 
 ### Alice Studio (Desktop)
 
-<!-- PLACEHOLDER: res/studio-screenshot.png — Alice Studio in wide mode showing
-     OPS view with camera feed, depth overlay, face tracking bounding boxes,
-     motor slider, and system telemetry panel -->
+
+<p align="center">
+  <img src="res/studio_ops.png" width="45%" />
+  <img src="res/studio_cfg.png" width="45%" />
+</p>
 
 - **OPS mode** — live camera feed (zoomable), depth preview with measurement reticle, motor position slider, face/eye tracking overlay, real-time histogram, system telemetry
 - **CFG mode** — lens calibration with interactive graph, resolution and quality settings, LAN sync management, transmission quality sliders
@@ -64,8 +61,9 @@ When both apps are running, they pair over LAN via WebSocket. The desktop stream
 
 ### Android App
 
-<!-- PLACEHOLDER: res/android-screenshot.png — Android camera screen showing
-     face tracking overlay and device status indicator -->
+<p align="center">
+  <img src="res/android.jpg" width="60%" />
+</p>
 
 - Standalone operation with all four AF modes
 - ONNX YOLO face detection with ML Kit eye landmark refinement
@@ -83,15 +81,15 @@ When both apps are running, they pair over LAN via WebSocket. The desktop stream
 | **Depth Camera** | [Intel RealSense](https://store.realsenseai.com/) D415 / D435 / D455 / D405 | Any D4xx series. Used models work fine. |
 | **Focus Motor** | [Tilta Nucleus Nano II](https://tilta.com/shop/nucleus-nano-ii-wireless-lens-control-system) | Hand controller needed only for initial pairing. |
 | **Wireless Bridge** | [nRF52840 USB Dongle](https://www.amazon.com/NRF52840-DONGLE-Micro-Dev-Kit-PCA10059/dp/B0F2J95GDR) | Flashed with Alice firmware. |
-| **Accessories** | USB hub | To connect peripherals to the phone or desktop. |
-| **Capture Card** *(optional)* | Any UVC-class HDMI capture card | For monitoring the camera's HDMI output on Alice Studio. |
+| **Accessories** *(optional)* | USB hub | To connect peripherals to the phone or desktop. |
+| **Capture Card** *(optional)* | Any UVC-class HDMI capture card | For monitoring the camera's HDMI output on Alice. |
 
 ## Quick Start
 
 1. **Flash the dongle** — download `firmware.hex` from [Releases](https://github.com/Stry233/Vanta/releases) and flash via nRF Connect Programmer
 2. **Pair the motor** — use the Tilta hand controller to pair on channel 12, then turn the controller off
-3. **Install the app** — install `alice.apk` on your phone, or build Alice Studio from source
-4. **Connect hardware** — plug the dongle, RealSense, and (optionally) a capture card into a USB hub
+3. **Install the app** — install Alice client on Relaease page, or build from source.
+4. **Connect hardware** — plug the dongle, RealSense, and (optionally) a capture card into a USB hub or your PC's I/O interface.
 5. **Calibrate your lens** — record 3-5 depth/motor points across your focus range, then export
 6. **Shoot** — select AF-S, AF-C, or AF-F and let Alice handle focus
 
