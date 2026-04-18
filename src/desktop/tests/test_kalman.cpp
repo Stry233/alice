@@ -153,22 +153,17 @@ TEST(DepthEstimator, SlowDragAcrossTwoDepthRegionsSnapsIndependently) {
         << " m after crosshair moved 60 % of the frame";
 }
 
-// ── Diagnostic tests for the "drag leaks old context" bug ────────────
+// ── Drag-across-gradient diagnostics ─────────────────────────────────
 //
-// The preceding SlowDragAcrossTwoDepthRegionsSnapsIndependently test
-// passes because a 500→4000 mm jump trips the discontinuity gate
-// (relDelta = 7.0, well above kDiscontinuityDelta = 0.25). Real scenes
-// rarely produce such clean 8× steps — depths vary continuously across
-// a wall, a product shot, or a dolly move. The tests below probe the
-// behaviour that real footage exercises.
+// SlowDragAcrossTwoDepthRegionsSnapsIndependently above uses a 500→4000 mm
+// step that trips the discontinuity gate. Real scenes rarely have such
+// clean 8× steps — these tests exercise the sub-discontinuity path
+// where the adaptive EMA has to carry the estimator across the step.
 
 TEST(DepthEstimator, DragAcrossMildDepthGradientBlendsStaleContext) {
-    // Scene: left half 1000 mm, right half 1200 mm (20 % relative step —
-    // below kDiscontinuityDelta = 25 %). Converge at left, then drag to
-    // the right at 1 %/frame. The discontinuity gate does NOT fire (step
-    // is sub-threshold), so the EMA must carry the estimator to the new
-    // value. Adaptive alpha helps, but this is where drift is visible
-    // to the user.
+    // Left 1000 mm → right 1200 mm (20 % step, below the 25 %
+    // discontinuity threshold). Sub-threshold position deltas too, so
+    // the reading must settle via the EMA alone.
     DepthEstimator est;
     const int W = 640, H = 480;
     std::vector<uint16_t> frame(W * H, 0);
@@ -187,32 +182,16 @@ TEST(DepthEstimator, DragAcrossMildDepthGradientBlendsStaleContext) {
         last = est.process(frame.data(), W, H, 0.2f + i * 0.01f, 0.5f);
     }
 
-    // Documented expectation: within 10 mm of the new region's true
-    // depth. If this fails at e.g. 1.14 m the sub-threshold EMA is
-    // dragging old context — exactly what "use no context when the
-    // crosshair moves" is supposed to eliminate.
     EXPECT_NEAR(last.valueM, 1.2f, 0.01f)
-        << "After a slow drag across a sub-discontinuity depth step, the "
-        << "reading must settle at the new region. Got " << last.valueM
-        << " m — stale-context blending suspected.";
+        << "Slow drag across a sub-discontinuity step should settle at "
+        << "the new region. Got " << last.valueM;
 }
 
 TEST(DepthEstimator, ResetPlusStalePositionProcessLeaksToNextFrame) {
-    // Simulates the UI/capture race the fix was meant to close:
-    //
-    //   T+0: UI thread calls setMeasurementPosition(NEW). The function
-    //        writes measureX_/Y_ under positionMutex_, THEN takes
-    //        estimatorParamsMutex_ and calls estimator_.reset().
-    //
-    //   T+1: Capture thread had already read mx/my BEFORE the UI wrote
-    //        (they're on separate mutexes). It now waits on
-    //        estimatorParamsMutex_ and, once released, calls
-    //        estimator_.process() with the STALE (old) mx/my.
-    //
-    // Modelled here as: converge at OLD, reset(), process() at OLD,
-    // process() at NEW (sub-threshold delta). The last reading is
-    // what the user sees. If it carries 500 mm context it proves the
-    // race is the culprit.
+    // Models the UI/capture race: capture had already read the OLD
+    // mx/my before the UI wrote the new ones, so the first process()
+    // after reset() runs at the STALE position and re-initialises
+    // stateM_ there. The next frame then has to recover via EMA.
     DepthEstimator est;
     const int W = 640, H = 480;
     std::vector<uint16_t> leftFrame(W * H, 0);
@@ -224,38 +203,27 @@ TEST(DepthEstimator, ResetPlusStalePositionProcessLeaksToNextFrame) {
         }
     }
 
-    // Converge at OLD (left region).
     for (int i = 0; i < 30; ++i) {
         est.process(leftFrame.data(), W, H, 0.20f, 0.5f);
     }
     auto before = est.process(leftFrame.data(), W, H, 0.20f, 0.5f);
     EXPECT_NEAR(before.valueM, 1.0f, 0.01f);
 
-    // UI drag event: reset().
     est.reset();
-    // Race: capture processes at the STALE OLD position.
-    est.process(leftFrame.data(), W, H, 0.20f, 0.5f);
-    // Next frame: capture sees the NEW position, 1 % further right.
-    // Sub-threshold delta, sub-discontinuity depth step. The adaptive
-    // EMA must carry the reading — but it's fighting stale state that
-    // was re-installed by the racy call above.
-    DepthEstimator::Reading last;
-    for (int i = 1; i <= 1; ++i) {
-        last = est.process(rightFrame.data(), W, H, 0.21f + i * 0.00f, 0.5f);
-    }
-    // A single post-race frame at the new position: how close to 1.0
-    // does the reading stay? Anywhere meaningfully above 1.0 confirms
-    // that state WAS re-initialised at the stale location.
+    est.process(leftFrame.data(), W, H, 0.20f, 0.5f);  // stale-position race
+    auto last = est.process(rightFrame.data(), W, H, 0.21f, 0.5f);
+
+    // Documents that state IS re-installed at the stale location — the
+    // single post-race frame doesn't recover on its own. See
+    // DragAcrossMildDepthGradientBlendsStaleContext for the full-drag case.
     EXPECT_NEAR(last.valueM, 1.0f, 0.01f)
-        << "After reset+stale-process race, stateM must reflect the "
-        << "stale OLD-position depth. Got " << last.valueM;
+        << "Post-race stateM should reflect the stale position. Got "
+        << last.valueM;
 }
 
 TEST(DepthEstimator, ResetAtNewPositionDirectlyYieldsNewDepth) {
-    // Control: when the UI reset is followed by a process() at the NEW
-    // position (no race), the very first reading IS the new depth with
-    // zero blending. This is what the fix is SUPPOSED to produce on the
-    // happy path.
+    // Happy path: reset followed by process at the NEW position — first
+    // reading is the new depth, zero blending.
     DepthEstimator est;
     const int W = 640, H = 480;
     std::vector<uint16_t> frame(W * H, 0);
@@ -269,20 +237,14 @@ TEST(DepthEstimator, ResetAtNewPositionDirectlyYieldsNewDepth) {
         est.process(frame.data(), W, H, 0.20f, 0.5f);
     }
     est.reset();
-    // No race — capture's next process sees the new position.
     auto r = est.process(frame.data(), W, H, 0.60f, 0.5f);
-    EXPECT_NEAR(r.valueM, 1.2f, 0.01f)
-        << "Reset followed by process at NEW position must snap — this "
-        << "is the happy path. Got " << r.valueM;
+    EXPECT_NEAR(r.valueM, 1.2f, 0.01f);
 }
 
 TEST(DepthEstimator, DragAtQuarterPerFrameAcrossGradientStaysStuck) {
-    // Continuous drag at 0.25 %/frame across the whole frame over 240
-    // frames (~8 s at 30 fps). Depth steps through a smooth gradient
-    // so NO single frame sees a discontinuity — the reading relies
-    // entirely on alpha-weighted EMA. This matches what a cinematographer
-    // experiences painting the crosshair across a subject to find depth
-    // on different facial features.
+    // Continuous drag at 0.25 %/frame over ~8 s through a smooth depth
+    // gradient. No single frame sees a discontinuity — everything goes
+    // through alpha-weighted EMA.
     DepthEstimator est;
     const int W = 640, H = 480;
     std::vector<uint16_t> frame(W * H, 0);
@@ -311,15 +273,9 @@ TEST(DepthEstimator, DragAtQuarterPerFrameAcrossGradientStaysStuck) {
 }
 
 TEST(DepthEstimator, SparseFarROIBecomesValidAtLowerValidPixelThreshold) {
-    // Documents the fix: with kMinValidPixels lowered to 4, a
-    // 6-valid-pixel 4.75 m ROI becomes a VALID reading — low
-    // confidence (reflecting the sparse ROI) but numerically
-    // correct. That way the capture thread actually emits depth
-    // and the UI updates to 4.75 m instead of freezing at 1.0 m.
-    //
-    // This test will fail until kMinValidPixels is lowered. It
-    // exists to track the fix: if someone raises the threshold
-    // back to 8, this test flags the regression.
+    // Regression guard: at 4-5 m the D4xx often yields only 4-6 valid
+    // pixels per 7×7 ROI. A stricter kMinValidPixels would mark the
+    // frame invalid and freeze the UI at the pre-drag depth.
     DepthEstimator est;
     std::vector<uint16_t> sparseFar(640 * 480, 0);
     const int cx = 320, cy = 240;

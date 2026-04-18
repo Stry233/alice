@@ -59,24 +59,15 @@ void RealSenseManager::setMeasurementPosition(float x, float y) {
         measureX_ = cx;
         measureY_ = cy;
     }
-    // Publish to the lock-free cache used by the UI thread.
     measureXCached_.store(cx, std::memory_order_relaxed);
     measureYCached_.store(cy, std::memory_order_relaxed);
-    // Reset the estimator. User-initiated moves (tap, drag) should
-    // see the new position's depth with zero context from the old
-    // position — the EMA would otherwise blend old-crosshair depths
-    // into the reading during a slow drag because sub-2% per-frame
-    // moves never trip the estimator's auto-reset.
+    // Sub-2% moves don't trip the estimator's auto-reset, so a slow
+    // drag would otherwise EMA-blend old-position depth into the new.
     QMutexLocker lock(&estimatorParamsMutex_);
     estimator_.reset();
 }
 
 void RealSenseManager::setTrackedPosition(float x, float y) {
-    // Same position update path as the user-move variant above, but
-    // WITHOUT resetting the estimator. The AF-F face tracker moves
-    // the crosshair every color frame by sub-pixel amounts as it
-    // smooths the face bbox; the EMA's continuity across those moves
-    // is what makes the depth reading stable under a tracked face.
     const float cx = std::clamp(x, 0.0f, 1.0f);
     const float cy = std::clamp(y, 0.0f, 1.0f);
     {
@@ -89,10 +80,6 @@ void RealSenseManager::setTrackedPosition(float x, float y) {
 }
 
 void RealSenseManager::jumpToPosition(float x, float y) {
-    // setMeasurementPosition already resets the estimator. Kept as a
-    // separate method so the QML side has a self-documenting name
-    // for the tap-to-focus gesture, and because processTap piggybacks
-    // on this entry point to also update the AF focus target.
     setMeasurementPosition(x, y);
 }
 
@@ -283,51 +270,35 @@ void RealSenseManager::setStreamConfig(int dw, int dh, int df, int cw, int ch, i
     }
 }
 
-// Try to put a D4xx device into HIGH_ACCURACY mode before we start
-// streaming. This biases the stereo matcher to drop low-confidence
-// pixels (fewer but cleaner samples) instead of the default "medium"
-// preset which tries to fill every pixel and pays for it in noise.
-// Safe no-op on devices that don't expose the option (older D4xx
-// firmware, or non-D4xx sensors).
-static void applyHighAccuracyPreset(rs2::device &dev) {
+// MEDIUM_DENSITY balances match density vs. accuracy — HIGH_ACCURACY
+// starves the matcher of pixels past ~4 m; HIGH_DENSITY fabricates
+// questionable matches that throw autofocus. The downstream pipeline
+// (ROI median + confidence-weighted EMA) absorbs the mild extra noise.
+static void applyDensityPreset(rs2::device &dev) {
     try {
         for (auto &sensor : dev.query_sensors()) {
             if (!sensor.is<rs2::depth_sensor>()) continue;
             auto ds = sensor.as<rs2::depth_sensor>();
             if (!ds.supports(RS2_OPTION_VISUAL_PRESET)) continue;
             ds.set_option(RS2_OPTION_VISUAL_PRESET,
-                          RS2_RS400_VISUAL_PRESET_HIGH_ACCURACY);
+                          RS2_RS400_VISUAL_PRESET_MEDIUM_DENSITY);
         }
-    } catch (...) {
-        // Some firmwares throw when set_option is called off the main
-        // start — we just skip the preset rather than fail the whole
-        // capture startup.
-    }
+    } catch (...) {}
 }
 
-// Switch the depth sensor from the default 1 mm-per-unit resolution
-// to 0.1 mm-per-unit (sub-millimetre precision). D4xx firmware
-// computes depth from sub-pixel stereo disparity and is capable of
-// finer-than-1 mm output; the 1 mm unit is just the default Z16
-// quantization. 0.1 mm trades the max encodable distance — ~6.55 m
-// with uint16 at 0.1 mm vs. 65.5 m at 1 mm — but 6.55 m comfortably
-// covers every focal range Alice operates in.
-//
-// Returns the actual scale the sensor now reports, so the estimator
-// can trust get_depth_scale() rather than assuming we succeeded.
+// Try to set DEPTH_UNITS to 0.1 mm per Z16 unit. Trades max encodable
+// depth (~6.55 m at 0.1 mm vs 65.5 m at 1 mm — fine for Alice's range)
+// for sub-mm precision. Returns the scale the sensor actually reports
+// so the estimator can trust it regardless of whether set_option took.
 static float applySubMillimetrePrecision(rs2::device &dev) {
-    float resultScale = 0.001f; // legacy default
+    float resultScale = 0.001f;
     try {
         for (auto &sensor : dev.query_sensors()) {
             if (!sensor.is<rs2::depth_sensor>()) continue;
             auto ds = sensor.as<rs2::depth_sensor>();
             if (ds.supports(RS2_OPTION_DEPTH_UNITS)) {
-                try {
-                    ds.set_option(RS2_OPTION_DEPTH_UNITS, 0.0001f);
-                } catch (...) {
-                    // Some firmwares reject 0.0001 — fall back to
-                    // whatever the sensor currently reports.
-                }
+                try { ds.set_option(RS2_OPTION_DEPTH_UNITS, 0.0001f); }
+                catch (...) {}
             }
             resultScale = ds.get_depth_scale();
         }
@@ -337,11 +308,8 @@ static float applySubMillimetrePrecision(rs2::device &dev) {
 
 void RealSenseManager::captureLoop() {
     try {
-        // Bind to the user's preferred camera by serial when present —
-        // librealsense picks the first attached device by default, which
-        // is non-deterministic with multiple cameras plugged in. If the
-        // preferred serial isn't currently present we fall through to
-        // the auto-pick so the app still comes up on *some* camera.
+        // Bind to preferred serial when present. Auto-pick fallback if
+        // the preferred camera is unplugged so the app still comes up.
         if (!preferredSerial_.isEmpty()) {
             try {
                 rs2::context ctx;
@@ -372,17 +340,11 @@ void RealSenseManager::captureLoop() {
         connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
         lastInitFailed_ = false;
 
-        // Tell D4xx firmware to prefer accuracy over density — this has
-        // to happen after pipeline.start() because the sensor isn't live
-        // until then. No-op on unsupported devices.
+        // Sensor options have to be applied after pipeline.start() —
+        // the device isn't live until then.
         try {
             auto dev0 = profile.get_device();
-            applyHighAccuracyPreset(dev0);
-            // Reconfigure the depth unit to 0.1 mm if supported, then
-            // push the resulting scale to the estimator so its
-            // threshold maths use the correct units. Held under the
-            // estimator-params mutex so the capture loop's next
-            // process() call sees the new scale atomically.
+            applyDensityPreset(dev0);
             const float scale = applySubMillimetrePrecision(dev0);
             depthScaleM_.store(scale, std::memory_order_relaxed);
             {
@@ -391,9 +353,6 @@ void RealSenseManager::captureLoop() {
             }
         } catch (...) {}
 
-        // Read device identity off the active pipeline so the UI popover can
-        // display the actual model. Safe to fail — the getters fall back to
-        // whatever was last cached.
         try {
             auto dev = profile.get_device();
             QString name;
@@ -431,70 +390,27 @@ void RealSenseManager::captureLoop() {
     // Align depth to color so crosshair on RGB maps to correct depth pixel
     rs2::align alignToColor(RS2_STREAM_COLOR);
 
-    // ── librealsense post-processing chain ──────────────────────────
+    // librealsense post-processing chain. Filters run in disparity
+    // space (noise is uniform there, not in metric depth), hence the
+    // depth→disparity → filter → disparity→depth sandwich.
     //
-    // Raw D4xx depth has ~1–2 % noise at 1 m plus frequent one-pixel
-    // holes from low-confidence stereo matches. Running the standard
-    // spatial + temporal filters BEFORE we sample the ROI halves the
-    // noise floor without adding fabricated data.
-    //
-    //   spatial_filter   — edge-preserving domain transform.
-    //       Magnitude 2, alpha 0.5, delta 20. Mild smoothing that
-    //       preserves object boundaries (so the ROI median at a
-    //       subject edge isn't smeared into the background).
-    //
-    //   temporal_filter  — per-pixel IIR with persistence.
-    //       alpha 0.4, delta 20, persistence "Valid in 2 of 4".
-    //       Per-pixel history cleans static-scene noise; the short
-    //       persistence window keeps latency < 100 ms so focus on a
-    //       moving subject still tracks.
-    //
-    //   disparity transform  — noise is uniform in disparity space,
-    //       NOT depth space. librealsense's recommended pattern is
-    //       depth→disparity, filter, disparity→depth so the filters
-    //       operate on the correct statistical domain.
-    //
-    // Hole-filling is deliberately OMITTED — it fabricates data that
-    // looks like valid readings to the estimator; the estimator's ROI
-    // median already tolerates holes gracefully by falling back to
-    // neighbour pixels.
+    // Temporal alpha = 1.0 disables per-pixel IIR smoothing: IIR mixes
+    // prior frames into every pixel and makes scene transitions ramp
+    // over 3-5 frames, defeating the discontinuity gate downstream.
+    // HOLES_FILL stays enabled — that uses per-pixel history only
+    // where the current frame has no reading.
     rs2::disparity_transform depth_to_disparity(true);
     rs2::disparity_transform disparity_to_depth(false);
     rs2::spatial_filter spatial;
     rs2::temporal_filter temporal;
     try {
-        // Spatial: light edge-preserving smoothing. alpha 0.25 (was
-        // 0.5) because the estimator's 7×7 ROI median already absorbs
-        // per-frame noise, and a too-aggressive spatial filter smears
-        // depth gradients (e.g. the receding-floor plane) across
-        // adjacent pixels, which looked like jitter in the LiDAR
-        // waveform top-view.
         spatial.set_option(RS2_OPTION_FILTER_MAGNITUDE, 2);
         spatial.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 0.25f);
         spatial.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
-
-        // Temporal: alpha 1.0 means the current frame passes through
-        // unmixed — NO IIR smoothing. Previously we used 0.4 which
-        // mixed 60 % of the prior frame into every pixel; on an
-        // abrupt scene change (close object removed, far wall
-        // revealed) that meant the measurement the estimator sees
-        // ramps over 3–5 frames even though the subject matter
-        // changed instantaneously. The operator saw a ~150 ms
-        // "freeze" on small-to-large transitions because our
-        // discontinuity gate could only chase the filter's ramped
-        // output, not leap ahead of it.
-        //
-        // We KEEP the filter enabled because HOLES_FILL uses its
-        // per-pixel history to fill transient drops — that's the
-        // genuinely useful part. alpha = 1 disables the smoothing
-        // while preserving the hole-fill persistence.
         temporal.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 1.0f);
         temporal.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
         temporal.set_option(RS2_OPTION_HOLES_FILL, 3);
-    } catch (...) {
-        // Filter option-setting can throw on older firmware — falling
-        // back to librealsense defaults is still better than no filter.
-    }
+    } catch (...) {}
 
     // Frame throttling: skip frames if processing can't keep up
     int frameCount = 0;
@@ -509,20 +425,12 @@ void RealSenseManager::captureLoop() {
             lastFrameTimeMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
 
-            // Align depth to color (expensive — do every frame for accuracy).
-            // Filtering happens AFTER alignment: librealsense's filters
-            // accept either a standalone depth_frame or a whole frameset
-            // and we only want the depth plane processed; doing it after
-            // align means we filter exactly once, on the frame we're
-            // about to sample, with no wasted cycles on colour data.
+            // Align before filtering so we filter once on the frame
+            // we're about to sample, not on unused colour data.
             try { frames = alignToColor.process(frames); } catch (...) {}
 
             auto depthFrame = frames.get_depth_frame();
             if (depthFrame) {
-                // Apply spatial + temporal noise reduction. Filters run
-                // in disparity space (noise is uniform there, not in
-                // metric depth) — depth→disparity, filter, disparity→
-                // depth is the librealsense-recommended chain.
                 try {
                     rs2::frame f = depthFrame;
                     f = depth_to_disparity.process(f);
@@ -530,17 +438,11 @@ void RealSenseManager::captureLoop() {
                     f = temporal.process(f);
                     f = disparity_to_depth.process(f);
                     depthFrame = f.as<rs2::depth_frame>();
-                } catch (...) {
-                    // Fall back to unfiltered frame — still better than
-                    // a dropped frame from a transient filter hiccup.
-                }
+                } catch (...) {}
                 int w = depthFrame.get_width();
                 int h = depthFrame.get_height();
                 auto data = reinterpret_cast<const uint16_t *>(depthFrame.get_data());
 
-                // Depth estimation: ROI median + confidence-weighted EMA.
-                // Runs every frame (cheap, ~49 pixels sorted) — autofocus
-                // needs the freshest possible reading.
                 float mx, my;
                 {
                     QMutexLocker lock(&positionMutex_);
@@ -549,9 +451,6 @@ void RealSenseManager::captureLoop() {
                 }
                 DepthEstimator::Reading reading;
                 {
-                    // Serialize with parameter setters on the UI thread.
-                    // The critical section is ~50 μs (ROI sort dominates),
-                    // so slider drags never observe noticeable latency.
                     QMutexLocker lock(&estimatorParamsMutex_);
                     reading = estimator_.process(data, w, h, mx, my);
                 }
@@ -561,14 +460,8 @@ void RealSenseManager::captureLoop() {
                     emit depthChanged(reading.valueM, reading.confidence);
                     invalidStreak_ = 0;
                 } else {
-                    // Persistent invalidity: after ~kInvalidClearFrames in
-                    // a row without a usable reading (e.g. a drag landed
-                    // on a region with no stereo matches at all), broadcast
-                    // a zeroed signal so the UI stops painting the last
-                    // valid depth from the OLD crosshair position. Without
-                    // this the UI indistinguishable from a leak of old
-                    // context, which is exactly what a tap-to-focus move
-                    // is supposed to discard.
+                    // After ~0.25 s of no usable reading, blank the UI
+                    // so it can't keep painting the pre-drag depth.
                     if (++invalidStreak_ == kInvalidClearFrames) {
                         depth_ = 0.0f;
                         confidence_ = 0.0f;
@@ -576,10 +469,8 @@ void RealSenseManager::captureLoop() {
                     }
                 }
 
-                // Cache the aligned depth frame for on-demand point sampling
-                // (face tracker's per-face depth, eye-level depth, etc.).
-                // This is a memcpy of ~600 KiB per frame — ~0.3 ms on modern
-                // CPUs, well within the capture budget.
+                // Cache for off-crosshair sampling (face tracker, etc.).
+                // ~600 KiB memcpy, ~0.3 ms — within frame budget.
                 {
                     QMutexLocker lock(&depthCacheMutex_);
                     const size_t sz = static_cast<size_t>(w) * h;
@@ -589,15 +480,8 @@ void RealSenseManager::captureLoop() {
                     depthCacheH_ = h;
                 }
 
-                // Depth colormap: only generate every Nth frame (expensive,
-                // visual only) AND only when at least one consumer is
-                // subscribed — the OPS view doesn't bind alice.depthFrame at
-                // all, so the colormap is wasted CPU unless CFG view is open
-                // or the sync stream is enabled.
-                //
-                // kColormapDownsample = 3 gives ~10 fps colormap at a 30 fps
-                // capture, which is plenty for a diagnostic overlay but
-                // saves ~20 colorizeDepth() calls per second.
+                // Downsample to ~10 fps — the colormap is a diagnostic
+                // preview, not a real-time feed.
                 static constexpr int kColormapDownsample = 3;
                 if (colormapEnabled_ && frameCount % kColormapDownsample == 0) {
                     QImage depthImage = colorizeDepth(data, w, h);
@@ -664,26 +548,17 @@ float RealSenseManager::depthAt(float nx, float ny) const {
     QMutexLocker lock(&depthCacheMutex_);
     if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) return 0.0f;
 
-    // depthScaleM_ is metres per raw Z16 unit — 0.001 (1 mm) by default
-    // and 0.0001 (0.1 mm) after applySubMillimetrePrecision() has run
-    // on a D4xx. Convert the mm thresholds to raw-unit thresholds for
-    // the validity comparison, and the selected median to metres at the
-    // end. Reading the atomic scale per call is cheap and avoids a
-    // stale read if the capture thread just reconfigured the sensor.
     const float scale = depthScaleM_.load(std::memory_order_relaxed);
     const float mmPerUnit = scale * 1000.0f;
     const uint16_t minUnits = static_cast<uint16_t>(
-        std::clamp(std::ceil(static_cast<float>(minValidDepth_) / mmPerUnit),
-                   1.0f, 65535.0f));
+        std::clamp(std::ceil(minValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
     const uint16_t maxUnits = static_cast<uint16_t>(
-        std::clamp(std::floor(static_cast<float>(maxValidDepth_) / mmPerUnit),
-                   1.0f, 65535.0f));
+        std::clamp(std::floor(maxValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
 
     const int cx = std::clamp(static_cast<int>(nx * depthCacheW_), 0, depthCacheW_ - 1);
     const int cy = std::clamp(static_cast<int>(ny * depthCacheH_), 0, depthCacheH_ - 1);
 
-    // 5×5 neighbourhood — take the median of valid readings to survive
-    // one or two hole pixels without pulling the estimate off the subject.
+    // 5×5 median to survive one or two hole pixels.
     constexpr int kRadius = 2;
     const int x0 = std::max(0, cx - kRadius);
     const int y0 = std::max(0, cy - kRadius);
@@ -703,15 +578,13 @@ float RealSenseManager::depthAt(float nx, float ny) const {
     }
     if (n == 0) return 0.0f;
 
-    // Insertion sort — n ≤ 25, branchless-ish.
     for (int i = 1; i < n; ++i) {
         uint16_t v = samples[i];
         int j = i - 1;
         while (j >= 0 && samples[j] > v) { samples[j + 1] = samples[j]; --j; }
         samples[j + 1] = v;
     }
-    const uint16_t median = samples[n / 2];
-    return static_cast<float>(median) * scale; // raw units → metres
+    return samples[n / 2] * scale;
 }
 
 QVariantList RealSenseManager::depthHorizontalSlice(float ny, int samples) const {
@@ -721,35 +594,25 @@ QVariantList RealSenseManager::depthHorizontalSlice(float ny, int samples) const
 
     QMutexLocker lock(&depthCacheMutex_);
     if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) {
-        // Still return the requested number of slots (all zeros) so the
-        // QML side can render a flat baseline instead of going empty
-        // and collapsing the layout on every frame the camera glitches.
+        // Keep the slot count stable so the QML layout doesn't collapse
+        // on a transient camera glitch.
         for (int i = 0; i < samples; ++i) out.append(0.0f);
         return out;
     }
 
-    // See depthAt() for the rationale — scale is read once so the
-    // per-pixel conversion is a single multiply.
     const float scale = depthScaleM_.load(std::memory_order_relaxed);
     const float mmPerUnit = scale * 1000.0f;
     const uint16_t minUnits = static_cast<uint16_t>(
-        std::clamp(std::ceil(static_cast<float>(minValidDepth_) / mmPerUnit),
-                   1.0f, 65535.0f));
+        std::clamp(std::ceil(minValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
     const uint16_t maxUnits = static_cast<uint16_t>(
-        std::clamp(std::floor(static_cast<float>(maxValidDepth_) / mmPerUnit),
-                   1.0f, 65535.0f));
+        std::clamp(std::floor(maxValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
 
     const int baseY = std::clamp(static_cast<int>(ny * depthCacheH_), 0,
                                  depthCacheH_ - 1);
 
-    // For each of the `samples` horizontal positions, probe THREE
-    // vertical rows spaced ~3% of the frame height apart. Without this
-    // band-sampling a scene that has lateral structure (a person left
-    // of frame vs. wall behind them) but uniform depth at the
-    // crosshair's single row still collapses to one flat line — the
-    // three rows pick up depth variation at each lateral position
-    // that reads as the vertical "spread" in a real top-down view.
-    //
+    // Probe three vertical rows per X so a lateral structure (person
+    // left-of-frame, wall behind) produces a visible vertical spread
+    // in the top-view plot instead of collapsing to a single flat line.
     // Returns 3 * samples depths, consecutive triplets sharing an X.
     const int rowOffset = std::max(2, depthCacheH_ / 32);
     const int rowYs[3] = {
@@ -785,40 +648,33 @@ QVariantList RealSenseManager::depthHorizontalSlice(float ny, int samples) const
             out.append(0.0f);
             continue;
         }
-        // 9-element insertion sort — faster than std::sort for this size.
         for (int k = 1; k < n; ++k) {
             uint16_t v = neighbours[k];
             int j = k - 1;
             while (j >= 0 && neighbours[j] > v) { neighbours[j + 1] = neighbours[j]; --j; }
             neighbours[j + 1] = v;
         }
-        out.append(static_cast<float>(neighbours[n / 2]) * scale);
+        out.append(neighbours[n / 2] * scale);
       }
     }
     return out;
 }
 
 QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int height) {
-    // Depth-value → RGB LUT. When RS2_OPTION_DEPTH_UNITS is re-
-    // configured (1 mm per unit vs 0.1 mm per unit for sub-mm
-    // precision), the mapping between raw Z16 value and metric depth
-    // shifts, so the LUT has to be rebuilt. Cached by scale: rebuild
-    // only on change. Single-threaded (capture thread calls this), so
-    // a plain static suffices.
-    //
-    // 192 KiB in L2, zero per-pixel math, zero branches.
+    // Depth-value → RGB LUT, rebuilt when DEPTH_UNITS changes. Single-
+    // threaded (capture thread only) so a plain static is fine.
     static std::array<std::array<uint8_t, 3>, 65536> kDepthLut{};
     static float cachedScale = 0.0f;
 
     const float scale = depthScaleM_.load(std::memory_order_relaxed);
     if (scale != cachedScale) {
-        constexpr int kMaxDisplayDepth = 5000; // mm; hot end of the turbo gradient
+        constexpr int kMaxDisplayDepth = 5000;
         constexpr int kMinDisplay = kDefaultMinValidDepth;
         constexpr int kRangeMm = kMaxDisplayDepth - kMinDisplay;
         const float mmPerUnit = scale * 1000.0f;
         for (int d = 0; d < 65536; ++d) {
             if (d == 0) {
-                kDepthLut[d] = {20, 20, 20}; // invalid / no-data → neutral gray
+                kDepthLut[d] = {20, 20, 20};
                 continue;
             }
             const int d_mm = static_cast<int>(d * mmPerUnit);
@@ -829,10 +685,8 @@ QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int
         cachedScale = scale;
     }
 
-    // Output at half resolution: the colormap is purely a visual preview
-    // (the CFG depth panel scales it to fit), so ¼ the pixels is visually
-    // indistinguishable while spending ¼ of the CPU. The raw depth values
-    // used for the crosshair / autofocus pipeline are untouched.
+    // Half-resolution output: the colormap is a visual preview, the
+    // raw data used for autofocus is untouched.
     const int outW = width / 2;
     const int outH = height / 2;
     QImage img(outW, outH, QImage::Format_RGB888);

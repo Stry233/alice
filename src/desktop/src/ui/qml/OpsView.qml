@@ -246,13 +246,8 @@ Item {
                                     enabled: alice ? alice.focusMode !== 3 : true  // no manual tap in AF-F
                                     cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                     property bool isDragging: false
-                                    // Press = full tap: teleport the measurement, reset the
-                                    // depth estimator, AND update the autofocus focus point
-                                    // (processTap). AF-C gates depth updates on proximity to
-                                    // the focus point — without this call focusX_/Y_ stay at
-                                    // the previous value and AF-C silently rejects new depth.
-                                    // Drag = soft position update only; keeps focus pinned
-                                    // to the original tap point so dragging to inspect depth
+                                    // Press → processTap so AF-C's focusX_/Y_ gate updates.
+                                    // Drag → setMeasurementPosition so inspecting depth
                                     // elsewhere doesn't hijack AF-C's target.
                                     onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
                                     onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
@@ -273,11 +268,8 @@ Item {
                                 anchors.bottom: parent.bottom
                                 anchors.right: parent.right
                                 width: wideDepthRow.lidarWidth
-                                // visible stays true across the whole
-                                // fade so Behavior on opacity can play
-                                // to completion. The width collapsing
-                                // to 0 plus opacity 0 effectively hides
-                                // it for input purposes.
+                                // visible tracks opacity so the fade-out
+                                // animation plays through before unmount.
                                 visible: opacity > 0.01
                                 opacity: wideDepthRow.lidarVisible ? 1.0 : 0.0
                                 Behavior on width {
@@ -294,12 +286,8 @@ Item {
                                 }
 
                                 measuredDepth: alice ? alice.depth : 0
-                                // focusDepthMeters() is a Q_INVOKABLE with
-                                // no NOTIFY — a plain property binding would
-                                // only evaluate once. Polled in the same
-                                // Timer that refreshes the depth column so
-                                // the green reference line tracks the motor
-                                // position continuously.
+                                // focusDepthMeters() is Q_INVOKABLE without
+                                // NOTIFY — poll it alongside the column.
                                 Timer {
                                     interval: 100
                                     running: wideLidar.opacity > 0

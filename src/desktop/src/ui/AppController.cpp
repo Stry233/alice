@@ -128,9 +128,8 @@ AppController::AppController(QObject *parent)
     connect(realsense_.get(), &RealSenseManager::error,
             this, [this](const QString &msg) { log("REALSENSE", "ERROR: " + msg); });
 
-    // Fan in the three managers' enumeration signals into a single
-    // availableDevicesChanged so QML re-binds every motor/RealSense/
-    // capture-card dropdown on plug, unplug, or active-device change.
+    // Fan in the three managers' enumeration signals so every device
+    // dropdown re-binds on plug/unplug/select.
     connect(motor_.get(), &MotorController::availableDevicesChanged,
             this, &AppController::availableDevicesChanged);
     connect(realsense_.get(), &RealSenseManager::availableDevicesChanged,
@@ -280,11 +279,9 @@ void AppController::initialize() {
     // Apply settings to depth sensor
     realsense_->setMinValidDepth(settings_->depthMinDistance());
     realsense_->setMaxValidDepth(settings_->depthMaxDistance());
-    // Push the persisted UI slider value through the setter so the
-    // estimator's baseAlpha matches what the slider displays. Before
-    // this call the estimator ran with its 0.30 default regardless of
-    // slider position — an invisible UI/actual mismatch that produced
-    // a "slider says responsive, readings feel sluggish" behaviour.
+    // Apply via the setter so the slider value and estimator alpha
+    // agree — direct construction would leave baseAlpha at its 0.30
+    // default regardless of what the slider shows.
     setDepthSmoothing(depthSmoothingSliderValue_);
 
     // Restore saved resolution settings
@@ -311,12 +308,9 @@ void AppController::initialize() {
         motor_->setPosition(lastPos);
     }
 
-    // Restore preferred hardware selections BEFORE coordinator->start()
-    // kicks off device discovery — otherwise the managers auto-pick the
-    // first available device and the preferred choice doesn't take
-    // effect until the next healthCheck tick (several seconds later).
-    // selectDevice() on each manager is a no-op if the id is empty
-    // (the auto-pick default), so unconfigured systems are unaffected.
+    // Restore preferred hardware BEFORE coordinator->start() — otherwise
+    // managers auto-pick and the preferred choice doesn't take until
+    // the next health check tick. Empty id is a no-op.
     if (const QString id = settings_->preferredMotorId(); !id.isEmpty()) {
         motor_->selectDevice(id);
     }
@@ -364,10 +358,8 @@ void AppController::initialize() {
         }
     }
 
-    // Restore the last calibration mapping if one was cached. Done after
-    // autofocus_ has its settings applied but before device discovery
-    // starts, so by the time a depth reading is published the mapping is
-    // already active.
+    // After autofocus settings, before device discovery — so the first
+    // depth reading finds the mapping already active.
     loadMappingCache();
 
     // Start device discovery (coordinator manages all three devices)
@@ -511,13 +503,8 @@ void AppController::setDepthMaxDistance(int mm) {
     settings_->setDepthMaxDistance(mm);
 }
 void AppController::setDepthSmoothing(float sliderValue) {
-    // The QML slider ranges 10-500 for historical reasons (the old Kalman
-    // took measurement-noise R directly). The new DepthEstimator takes an
-    // EMA alpha in [0.02, 1.0]. Map inversely so "higher slider = smoother"
-    // still reads the same way to the user:
-    //   10  → alpha 1.00 (raw, no smoothing)
-    //   100 → alpha 0.80 (light smoothing — default)
-    //   500 → alpha 0.02 (heavy smoothing)
+    // Slider 10-500 → alpha 1.0-0.02, inverted so "higher slider = smoother".
+    //   10 → 1.00 (raw), 100 → 0.80 (default), 500 → 0.02 (heavy).
     const float t = std::clamp((sliderValue - 10.0f) / 490.0f, 0.0f, 1.0f);
     const float alpha = std::max(0.02f, 1.0f - t * 0.98f);
     realsense_->setDepthSmoothing(alpha);
@@ -709,8 +696,6 @@ void AppController::setMeasurementPosition(float x, float y) {
 }
 
 void AppController::jumpToMeasurementPosition(float x, float y) {
-    // Teleport: clear the estimator first so the new position is sampled
-    // without any carryover from the old crosshair's depth.
     realsense_->jumpToPosition(x, y);
     emit measurePositionChanged();
     if (syncServer_->hasClient()) {
@@ -719,7 +704,6 @@ void AppController::jumpToMeasurementPosition(float x, float y) {
 }
 
 void AppController::processTap(float x, float y) {
-    // processTap is triggered by an explicit user tap — always a teleport.
     jumpToMeasurementPosition(x, y);
     autofocus_->processTap(x, y);
 }
@@ -841,17 +825,15 @@ void AppController::setUiScaleFactor(float v) {
 }
 
 QVariantList AppController::depthColumnAtFocus(int samples) const {
-    // Named "column" for QML-facing compatibility but produces a
-    // horizontal slice (top-view) — see depthHorizontalSlice doc.
+    // "Column" is the QML-facing name; the actual payload is a
+    // horizontal top-view slice.
     float mx = 0.5f, my = 0.5f;
     realsense_->getMeasurementPosition(mx, my);
     return realsense_->depthHorizontalSlice(my, samples);
 }
 
 float AppController::focusDepthMeters() const {
-    // Resolve current motor position through the mapping to get the
-    // lens's implied focus distance. -1 if no mapping is loaded (QML
-    // uses that as a "don't draw the focus line" sentinel).
+    // -1 = no mapping loaded (QML sentinel to hide the focus line).
     const auto &m = autofocus_->currentMapping();
     if (!m) return -1.0f;
     auto depth = m->getDepthForMotor(motor_->currentPosition());
@@ -957,19 +939,11 @@ void AppController::onColorFrame(const QImage &frame) {
     //      — the NEXT depth frame will be sampled at that position and
     //      flow through onDepthChanged → autofocus->processDepthData.
     if (autofocus_->focusMode() == FocusMode::FaceTracking && faceDetector_->isReady()) {
-        // Throttle the full AF-F pipeline to 10 Hz. Everything inside
-        // this block — ONNX inference, SubjectTracker histograms, per-
-        // face depthAt() sampling, primary-face selection, QML overlay
-        // rebuild and network broadcast — runs on the UI thread. At the
-        // 30 Hz color-stream rate it saturates one core and starves the
-        // QML compositor, so the capture-card preview drops below 1 FPS
-        // while aggregate CPU looks moderate on a multi-core box (one
-        // pinned core is 10 % of total usage).
-        //
-        // 10 Hz matches cinema-industry face-tracking rates (ARRI HI-5,
-        // Preston LR3) — a subject doesn't move meaningfully in 100 ms
-        // and the intermediate frames still push colorFrameChanged so
-        // the live preview stays smooth.
+        // 10 Hz throttle. The full AF-F pipeline (ONNX inference,
+        // SubjectTracker, per-face depth sampling, overlay rebuild,
+        // network broadcast) runs on the UI thread; at 30 Hz it
+        // saturates a core and drops the preview to <1 FPS. 10 Hz
+        // matches cinema tracking rates (ARRI HI-5, Preston LR3).
         const qint64 now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastFaceDetectMs_ < kFaceDetectIntervalMs) {
             emit colorFrameChanged();
@@ -1066,11 +1040,8 @@ void AppController::onColorFrame(const QImage &frame) {
 
         if (primary) {
             const QPointF fp = primary->focusPoint();
-            // Tracker path — keeps the EMA continuity across the
-            // face bbox's per-frame smoothing. Using the plain
-            // setMeasurementPosition here would reset the estimator
-            // on every tracker update, making the depth reading
-            // flicker as fast as the sensor's per-pixel noise.
+            // Tracker path keeps EMA continuity across sub-pixel bbox
+            // smoothing; setMeasurementPosition would reset every tick.
             realsense_->setTrackedPosition(
                 static_cast<float>(fp.x()),
                 static_cast<float>(fp.y()));
@@ -1160,9 +1131,7 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         break;
     }
     case SyncMessageType::ModeChange: {
-        // Suppress echoes: when WE broadcast a MODE_CHANGE, the Android
-        // client may echo it back after its own 200 ms window. Ignore
-        // inbound mode changes that arrive within our suppression period.
+        // Suppress echoes of our own broadcast within the window.
         auto now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastModeBroadcastMs_ < kSyncEchoSuppressMs) break;
 
@@ -1171,10 +1140,9 @@ void AppController::onSyncMessage(const SyncMessage &message) {
         if (mode == "SINGLE_AUTO") modeInt = 1;
         else if (mode == "CONTINUOUS_AUTO") modeInt = 2;
         else if (mode == "FACE_TRACKING") modeInt = 3;
-        // Derive enabled from mode (matches the Android convention:
-        // any non-manual mode is "enabled"). Don't use the payload's
-        // `enabled` field because Android may send it as false when
-        // the user hasn't explicitly toggled AF on the phone side.
+        // Derive enabled from mode: Android sends `enabled=false` in
+        // payloads when the phone hasn't explicitly toggled AF, which
+        // would otherwise clobber our active state.
         bool enabled = modeInt > 0;
         autofocus_->setFocusModeInt(modeInt);
         autofocus_->setEnabled(enabled);
@@ -1335,13 +1303,9 @@ void AppController::broadcastCurrentMapping() {
         .arg(QString::fromStdString(mapping->name())));
 }
 
-// ── Calibration mapping persistence ────────────────────────────────────
-//
-// Studio caches the currently-loaded mapping to disk so it can auto-restore
-// on the next launch. The cache is written by whatever path produced the
-// mapping — local file load, preset, or a remote CalibrationSync/PUSH —
-// because every path ultimately calls AutofocusController::loadMapping()
-// and those callers invoke saveMappingCache() after a successful load.
+// Calibration mapping persistence — the currently-loaded mapping is
+// cached to disk on every successful load (file, preset, remote sync)
+// so a restart auto-restores it.
 
 QString AppController::mappingCachePath() {
     const QString dir = QStandardPaths::writableLocation(
@@ -1356,7 +1320,7 @@ void AppController::saveMappingCache() {
     if (path.isEmpty()) return;
     const auto &mapping = autofocus_->currentMapping();
     if (!mapping) {
-        QFile::remove(path); // cache stale → nothing to restore
+        QFile::remove(path);
         return;
     }
     QFile f(path);

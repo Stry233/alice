@@ -4,6 +4,8 @@
 #include <QTimer>
 #include <QPainter>
 #include <QScreen>
+#include <QString>
+#include <QSvgRenderer>
 
 namespace alice {
 
@@ -13,8 +15,7 @@ public:
         setFlags(Qt::SplashScreen | Qt::FramelessWindowHint | Qt::WindowStaysOnTopHint);
         resize(520, 320);
 
-        auto *scr = screen();
-        if (scr) {
+        if (auto *scr = screen()) {
             auto geom = scr->availableGeometry();
             setPosition((geom.width() - width()) / 2, (geom.height() - height()) / 2);
         }
@@ -28,79 +29,72 @@ public:
         animTimer_.start(30);
     }
 
+    void setStatus(const QString &text) {
+        status_ = text;
+        update();
+    }
+
 protected:
     void paintEvent(QPaintEvent *) override {
         QPainter p(this);
         p.setRenderHint(QPainter::Antialiasing);
 
-        int w = width(), h = height();
+        const int w = width(), h = height();
 
-        // Background
         p.setPen(Qt::NoPen);
+        p.setBrush(QColor("#2A3139"));
+        p.drawRect(0, 0, w, h);
+
+        p.setBrush(QColor("#2B95D6"));
+        p.drawRect(0, 0, w, 3);
+
         p.setBrush(QColor("#1B2025"));
-        p.drawRoundedRect(0, 0, w, h, 12, 12);
-
-        // Border
+        p.drawRect(0, h - 64, w, 64);
         p.setPen(QPen(QColor("#394049"), 1));
-        p.setBrush(Qt::NoBrush);
-        p.drawRoundedRect(0, 0, w - 1, h - 1, 12, 12);
+        p.drawLine(0, h - 64, w, h - 64);
 
-        // Gradient at top
-        QLinearGradient topGrad(0, 0, 0, 120);
-        topGrad.setColorAt(0, QColor(43, 149, 214, 20));
-        topGrad.setColorAt(1, QColor(43, 149, 214, 0));
-        p.setPen(Qt::NoPen);
-        p.setBrush(topGrad);
-        p.drawRoundedRect(0, 0, w, 120, 12, 12);
+        const int contentTop = 3 + (253 - 116) / 2;
 
-        // Stylized "A" logo
+        QSvgRenderer logoSvg(QString(":/qt/qml/Alice/UI/assets/icons/alice_logo.svg"));
+        if (logoSvg.isValid()) {
+            QRectF logoRect((w - 44) / 2.0, contentTop, 44, 50);
+            logoSvg.render(&p, logoRect);
+        }
+
+        QFont titleFont("Alice Inter", 11, QFont::Bold);
+        titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 4);
+        titleFont.setCapitalization(QFont::AllUppercase);
+        p.setFont(titleFont);
         p.setPen(QColor("#E1E8ED"));
-        p.setFont(QFont("Inter", 52, QFont::Bold));
-        p.drawText(QRect(0, 40, w, 70), Qt::AlignHCenter, "A");
+        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, QStringLiteral(ALICE_APP_NAME));
 
-        // Gradient dot accent
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor("#EB684D"));
-        p.drawEllipse(QPoint(w / 2 + 24, 70), 4, 4);
-
-        // App name
-        QFont nameFont("Inter", 22, QFont::Bold);
-        nameFont.setLetterSpacing(QFont::AbsoluteSpacing, 3);
-        p.setFont(nameFont);
-        p.setPen(QColor("#E1E8ED"));
-        p.drawText(QRect(0, 130, w, 40), Qt::AlignHCenter, "Alice Studio");
-
-        // Subtitle
-        p.setFont(QFont("Inter", 10));
+        p.setFont(QFont("Alice Inter", 8));
         p.setPen(QColor("#8A9BA8"));
-        p.drawText(QRect(0, 172, w, 20), Qt::AlignHCenter,
+        p.drawText(QRect(0, contentTop + 100, w, 16), Qt::AlignHCenter,
                    "Autofocus Lens Interface for Cinema Equipment");
 
-        // Loading bar track
-        int barY = h - 48;
-        int barX = (w - 200) / 2;
+        const int barY = h - 40;
+        const int barX = (w - 200) / 2;
         p.setPen(Qt::NoPen);
         p.setBrush(QColor("#394049"));
         p.drawRoundedRect(barX, barY, 200, 3, 1, 1);
-
-        // Loading bar indicator
         p.setBrush(QColor("#2B95D6"));
         p.drawRoundedRect(barX + animOffset_, barY, 60, 3, 1, 1);
 
-        // Status
-        p.setFont(QFont("Inter", 9));
+        p.setFont(QFont("Alice Inter", 8));
         p.setPen(QColor("#5C6B7A"));
-        p.drawText(QRect(0, barY - 16, w, 14), Qt::AlignHCenter, "Initializing...");
+        p.drawText(QRect(0, barY - 20, w, 14), Qt::AlignHCenter, status_);
 
-        // Version + copyright
-        p.drawText(QRect(w - 60, h - 28, 44, 14), Qt::AlignRight, "v" ALICE_APP_VERSION);
-        p.drawText(QRect(16, h - 28, 200, 14), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");
+        p.setFont(QFont("Alice Inter", 7));
+        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v" ALICE_APP_VERSION);
+        p.drawText(QRect(16, h - 22, 200, 12), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");
     }
 
 private:
     QTimer animTimer_;
     int animOffset_ = 0;
     int animDirection_ = 1;
+    QString status_ = "Initializing...";
 };
 
 } // namespace alice

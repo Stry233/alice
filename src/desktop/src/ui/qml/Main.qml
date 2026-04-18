@@ -37,48 +37,35 @@ ApplicationWindow {
 
     color: Theme.bg
 
-    // Compute DPI-based scale factor at startup. Base design is for 96 DPI
-    // with 2x HTML CSS values — Qt already handles DPI scaling natively.
-    // The user's Ctrl+Plus / Ctrl+Minus adjustment is layered on top via
-    // Theme.scaleFactor so the two effects compose cleanly.
     Component.onCompleted: {
-        // Restore the user's saved UI zoom level. SettingsManager clamps
-        // to [0.6, 2.0] so a corrupt settings file can't wreck the UI.
         Theme.scaleFactor = alice ? alice.uiScaleFactor() : 1.0
         console.log("[Alice] Screen:", Screen.width + "x" + Screen.height,
                     "DPR:", Screen.devicePixelRatio,
                     "uiScale:", Theme.scaleFactor.toFixed(2))
-
         if (alice) alice.initialize()
     }
 
-    // ── UI zoom (VSCode-style Ctrl+Plus / Ctrl+Minus / Ctrl+0) ─────────
-    // Mutates Theme.scaleFactor — every binding that calls Theme.dp()
-    // automatically re-evaluates because QML's property-binding tracker
-    // picks up the scaleFactor read inside dp(). No per-component work.
-    // Persisted on each keystroke via alice.setUiScaleFactor() so the
-    // user's choice survives restarts without waiting for shutdown.
+    // Ctrl+Plus / Ctrl+Minus / Ctrl+0 UI zoom. Bindings through
+    // Theme.dp() re-evaluate automatically on scaleFactor change.
     readonly property real uiScaleMin: 0.6
     readonly property real uiScaleMax: 2.0
     readonly property real uiScaleStep: 0.1
     function applyUiScale(v) {
         var clamped = Math.max(uiScaleMin, Math.min(uiScaleMax, v))
-        Theme.scaleFactor = Math.round(clamped * 100) / 100   // trim FP drift
+        Theme.scaleFactor = Math.round(clamped * 100) / 100
         if (alice) alice.setUiScaleFactor(Theme.scaleFactor)
     }
-    // Qt parses "Ctrl++" as Ctrl + the `+` key; on US layouts the `+` key
-    // is physically Shift+=, which VSCode users habitually press. Bind
-    // both `Ctrl++` and `Ctrl+=` so either reads as "zoom in".
-    Shortcut { sequences: ["Ctrl++", "Ctrl+="];  onActivated: root.applyUiScale(Theme.scaleFactor + root.uiScaleStep) }
-    Shortcut { sequence:  "Ctrl+-";              onActivated: root.applyUiScale(Theme.scaleFactor - root.uiScaleStep) }
-    Shortcut { sequence:  "Ctrl+0";              onActivated: root.applyUiScale(1.0) }
+    // "Ctrl++" and "Ctrl+=" both mean zoom-in — on US layouts the
+    // `+` key is physically Shift+=, which users hit habitually.
+    Shortcut { sequences: ["Ctrl++", "Ctrl+="]; onActivated: root.applyUiScale(Theme.scaleFactor + root.uiScaleStep) }
+    Shortcut { sequence: "Ctrl+-";              onActivated: root.applyUiScale(Theme.scaleFactor - root.uiScaleStep) }
+    Shortcut { sequence: "Ctrl+0";              onActivated: root.applyUiScale(1.0) }
 
     // Mode: 0=OPS, 1=CFG
     property int currentMode: 0
 
-    // The depth colormap (~1–5 ms/frame to generate) is only rendered in the
-    // CFG tab's DepthRenderer. Drive the backend gate from mode so OPS-only
-    // users never pay the cost.
+    // Only CFG's DepthRenderer consumes the colormap — gate the backend
+    // so OPS-only users don't pay the 1-5 ms/frame colorize cost.
     Binding {
         target: alice
         property: "showDepthOverlay"
@@ -86,10 +73,6 @@ ApplicationWindow {
         when: alice !== null
     }
 
-    // Mutual-exclusive popover toggle: closing all others before opening target
-    // ensures clicking a different status badge correctly switches popovers.
-    // `active` drives the origin-slide animation; each popover keeps itself
-    // visible until its fade-out completes so the motion is smooth.
     function closeAllPopovers() {
         motorPopover.active = false
         depthPopover.active = false
@@ -118,9 +101,8 @@ ApplicationWindow {
 
         // Toolbar
         Rectangle {
-            // Layout.preferredHeight rather than just `height:` so the
-            // enclosing ColumnLayout re-allocates vertical space when
-            // Theme.toolbarHeight changes (e.g. user presses Ctrl+Plus).
+            // preferredHeight (not height) so the ColumnLayout re-lays
+            // out when Theme.toolbarHeight changes on zoom.
             Layout.fillWidth: true
             Layout.preferredHeight: Theme.toolbarHeight
             color: Theme.elevated

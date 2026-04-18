@@ -10,36 +10,23 @@ Rectangle {
     property string deviceName: ""
     property string deviceAddress: ""
 
-    // Connection lifecycle timestamps (epoch ms; 0 = never)
     property real connectedSinceMs: 0
     property real lastSeenMs: 0
 
-    // Live-updated display strings, refreshed every second while visible
     property string uptimeText: "—"
     property string lastSeenText: "never"
 
     signal reconnectClicked()
     signal disconnectClicked()
     signal restartClicked()
-    /**
-     * Fired when the user picks a different device from the selection
-     * list below. Parent routes this to alice.selectMotorDevice(id) etc.
-     */
     signal deviceSelected(string deviceId)
 
-    /**
-     * Enumerated candidates for this device type. Each element is a
-     * {id, name, active} map. The dropdown only renders when the list
-     * has ≥ 2 entries — for a single-device setup (the common case)
-     * the popover keeps its original slim layout.
-     */
+    // Each entry is {id, name, active}. The dropdown only renders
+    // when length ≥ 2, so single-device setups get the slim layout.
     property var deviceList: []
 
-    // Origin-slide presentation. Parent sets `anchorY` to the final resting
-    // position (just below the badge) and toggles `active` to show/hide.
-    // The popover itself animates its y up 6px + fades its opacity to 0
-    // on the way out — the backing `visible` property is derived from
-    // opacity so the fade-out has time to play before the item goes away.
+    // Fade + slide presentation. Parent sets anchorY and toggles
+    // `active`; visible tracks opacity so the fade-out plays out.
     property bool active: false
     property real anchorY: 48
 
@@ -82,12 +69,9 @@ Rectangle {
         onTriggered: popover.refreshTimes()
     }
 
-    // Backing `visible` is derived from opacity so the fade-out has time to
-    // play before the item vanishes. Toggling `active` is what parents do.
     visible: opacity > 0.01
     opacity: active ? 1.0 : 0.0
     y: anchorY - (active ? 0 : Theme.popoverSlideOffset)
-    // Adaptive width
     width: Math.max(Theme.popoverWidth, col.implicitWidth + Theme.dp(48))
     implicitHeight: col.implicitHeight + Theme.dp(40)
     color: Theme.surface
@@ -105,21 +89,20 @@ Rectangle {
         anchors.margins: Theme.dp(20)
         spacing: Theme.dp(16)
 
-        // Header: title + status chip
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.dp(12)
             Text {
                 text: popover.title
                 font.family: Theme.fontFamily
-                font.pixelSize: Theme.fontSizeSmall  // 20px at 200% (HTML 12px→24, but matching toolbar)
+                font.pixelSize: Theme.fontSizeSmall
                 font.weight: Font.DemiBold
                 color: Theme.textPrimary
                 Layout.fillWidth: true
             }
-            // Status chip — sized to always fit either "Connected" or "Offline"
+            // Chip width keyed to the wider of "Connected" / "Offline"
+            // so it doesn't jump when the status changes.
             Rectangle {
-                // Measure both texts and use the wider one
                 property real chipTextW: Math.max(connectedMeasure.implicitWidth, offlineMeasure.implicitWidth)
                 Text { id: connectedMeasure; text: "Connected"; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Font.DemiBold; visible: false }
                 Text { id: offlineMeasure; text: "Offline"; font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeMicro; font.weight: Font.DemiBold; visible: false }
@@ -165,11 +148,7 @@ Rectangle {
             Text { visible: connected; text: popover.uptimeText; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeMicro }
         }
 
-        // Device selector — only surfaced when ≥ 2 candidates of this
-        // type are present. Renders a compact radio-list so the user
-        // can pick which motor / RealSense / capture card is active.
-        // Active entry highlighted in Theme.primary so the current
-        // selection is unambiguous.
+        // Device selector (only when ≥ 2 candidates available).
         ColumnLayout {
             Layout.fillWidth: true
             spacing: Theme.dp(6)
@@ -208,7 +187,6 @@ Rectangle {
                         anchors.verticalCenter: parent.verticalCenter
                         spacing: Theme.dp(8)
 
-                        // Radio dot — filled for the active device.
                         Rectangle {
                             width: Theme.dp(10); height: Theme.dp(10)
                             radius: Theme.dp(5)
@@ -243,7 +221,6 @@ Rectangle {
             }
         }
 
-        // Buttons (connected)
         RowLayout {
             Layout.fillWidth: true; spacing: Theme.dp(8)
             visible: connected
@@ -271,7 +248,6 @@ Rectangle {
             }
         }
 
-        // Button (disconnected)
         Rectangle {
             Layout.fillWidth: true; height: Theme.dp(30); radius: Theme.radiusSm; visible: !connected
             color: reconnectMa.pressed ? Qt.darker(Theme.primaryMuted, 1.15)

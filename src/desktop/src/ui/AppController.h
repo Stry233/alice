@@ -23,12 +23,9 @@ class SettingsManager;
 class SyncServer;
 
 /**
- * Central QML ↔ C++ bridge.
- *
- * Owns every hardware manager (RealSense, motor, capture card), the
- * autofocus pipeline, face detection, network sync, and settings
- * persistence. Exposed to QML as the "alice" context property so
- * every UI binding resolves through a single, well-defined surface.
+ * Central QML ↔ C++ bridge. Owns the hardware managers (RealSense,
+ * motor, capture card), autofocus, face detection, network sync and
+ * settings. Exposed to QML as the "alice" context property.
  */
 class AppController : public QObject {
     Q_OBJECT
@@ -39,9 +36,7 @@ class AppController : public QObject {
     Q_PROPERTY(bool captureCardConnected READ captureCardConnected NOTIFY deviceStateChanged)
     Q_PROPERTY(int motorPosition READ motorPosition NOTIFY motorPositionChanged)
 
-    // Device identity — populated from the hardware managers on connect so
-    // the popover UI can show actual model / bus names instead of hardcoded
-    // placeholders. Re-notified on every device state transition.
+    // Device identity surfaced from the managers for the popover UI.
     Q_PROPERTY(QString motorDeviceName READ motorDeviceName NOTIFY deviceStateChanged)
     Q_PROPERTY(QString motorDeviceAddress READ motorDeviceAddress NOTIFY deviceStateChanged)
     Q_PROPERTY(QString realSenseDeviceName READ realSenseDeviceName NOTIFY deviceStateChanged)
@@ -88,11 +83,8 @@ class AppController : public QObject {
     Q_PROPERTY(QVariantList realSenseColorModes READ realSenseColorModes NOTIFY deviceStateChanged)
     Q_PROPERTY(QVariantList captureCardFormats READ captureCardFormats NOTIFY deviceStateChanged)
 
-    // Live device enumeration for the per-badge selection dropdown. Each
-    // list contains {id, name, active} entries — the UI renders the
-    // dropdown only when the list has 2+ entries (multiple same-type
-    // devices attached). NOTIFY fires on plug/unplug AND when the active
-    // device changes.
+    // Per-badge device enumeration. Each entry is {id, name, active};
+    // the UI renders the dropdown only when length ≥ 2.
     Q_PROPERTY(QVariantList motorDevices READ motorDevices NOTIFY availableDevicesChanged)
     Q_PROPERTY(QVariantList realSenseDevices READ realSenseDevices NOTIFY availableDevicesChanged)
     Q_PROPERTY(QVariantList captureCardDevices READ captureCardDevices NOTIFY availableDevicesChanged)
@@ -213,12 +205,7 @@ public:
 
     // ── Depth measurement ────────────────────────────────────────────
     Q_INVOKABLE void setMeasurementPosition(float x, float y);
-    /**
-     * Press/tap variant of setMeasurementPosition: forces the depth
-     * estimator to discard any context from the old crosshair position.
-     * Call from QML mouse-press / tap handlers; keep setMeasurementPosition
-     * for drag events where some smoothing across frames is desirable.
-     */
+    /** Tap variant — forces the depth estimator to reset. */
     Q_INVOKABLE void jumpToMeasurementPosition(float x, float y);
     Q_INVOKABLE void processTap(float x, float y);
 
@@ -241,28 +228,18 @@ public:
     QVariantList realSenseDevices() const;
     QVariantList captureCardDevices() const;
 
-    // Each setter tells the manager to prefer the new id (it restarts
-    // itself if needed), persists the choice via SettingsManager, and
-    // logs the switch. Empty id clears the preference (auto-pick).
+    // Persists the choice via SettingsManager and restarts the
+    // manager when its active device changes. Empty id = auto-pick.
     Q_INVOKABLE void selectMotorDevice(const QString &id);
     Q_INVOKABLE void selectRealSenseDevice(const QString &id);
     Q_INVOKABLE void selectCaptureCardDevice(const QString &id);
 
-    // ── UI scale (VSCode-style Ctrl+Plus / Ctrl+Minus) ─────────────────
-    // Stored in SettingsManager so the user's zoom level survives
-    // restarts. Main.qml reads uiScaleFactor() at startup, binds it
-    // into Theme.scaleFactor, and calls setUiScaleFactor() on each
-    // Ctrl+Plus / Ctrl+Minus / Ctrl+0 activation so the value persists
-    // without waiting for a shutdown flush.
+    // UI zoom (Ctrl+Plus / Ctrl+Minus / Ctrl+0). Persisted per change.
     Q_INVOKABLE float uiScaleFactor() const;
     Q_INVOKABLE void setUiScaleFactor(float v);
 
-    // ── LiDAR waveform overlay (OPS view) ──────────────────────────────
-    // Samples a vertical column of depth values at the current
-    // measurement X so the waveform draws the "point cloud" slice
-    // directly beneath the crosshair. focusDepthMeters() is the motor's
-    // position run back through the current mapping — that's the
-    // "where is the lens focused" reference line.
+    // LiDAR overlay. `focusDepthMeters` = motor position resolved
+    // through the current mapping (−1 when no mapping is loaded).
     Q_INVOKABLE QVariantList depthColumnAtFocus(int samples) const;
     Q_INVOKABLE float focusDepthMeters() const;
 
@@ -338,9 +315,7 @@ private:
     void broadcastSettings();
     void updateDepthColormapGate();
 
-    // Calibration mapping persistence. Studio caches the currently-loaded
-    // mapping so it auto-restores on the next launch — whether it came
-    // from a local file, a preset, or a remote sync push.
+    // Disk cache of the active mapping so the next launch restores it.
     static QString mappingCachePath();
     void saveMappingCache();
     void loadMappingCache();
@@ -373,10 +348,8 @@ private:
     float currentDepth_ = 0.0f;
     float currentConfidence_ = 0.0f;
 
-    // Last slider value posted for "Depth Smoothing". The slider ranges
-    // 10-500 (historical Kalman-R scale); AppController::setDepthSmoothing
-    // maps that to the DepthEstimator's EMA alpha internally. Cached here
-    // so the UI slider shows the user-facing value, not the alpha.
+    // Cached slider value (10-500, legacy Kalman-R scale); internally
+    // mapped to EMA alpha by setDepthSmoothing.
     float depthSmoothingSliderValue_ = 100.0f;
 
     // Cached tracked faces from the most recent detection pass (also pushed
@@ -385,19 +358,11 @@ private:
     int faceFrameWidth_ = 0;
     int faceFrameHeight_ = 0;
     qint64 lastFaceBroadcastMs_ = 0;
-    // Throttle the full AF-F pipeline (ONNX inference + SubjectTracker
-    // histograms + per-face depth sampling + primary selection + QML
-    // overlay rebuild) to 10 Hz. Everything inside onColorFrame runs on
-    // the UI thread; at the 30 Hz color-stream rate the chain saturates
-    // one core and starves the QML compositor, which stops painting the
-    // capture-card preview — the user sees < 1 FPS on the main monitor
-    // with aggregate CPU looking "fine" on a multi-core box.
-    //
-    // 10 Hz is the documented industry-standard rate for cinema face
-    // tracking (ARRI HI-5, Preston LR3) — a face doesn't move
-    // meaningfully in 100 ms, and the intermediate frames still publish
-    // colorFrameChanged so the live preview stays smooth.
-    static constexpr qint64 kFaceDetectIntervalMs = 100; // 10 Hz
+    // 10 Hz AF-F pipeline throttle. Full chain (ONNX, tracker, depth
+    // sampling, overlay rebuild) runs on the UI thread; at 30 Hz it
+    // saturates a core and drops the preview to <1 FPS. 10 Hz matches
+    // ARRI HI-5 / Preston LR3 cinema tracking rates.
+    static constexpr qint64 kFaceDetectIntervalMs = 100;
     qint64 lastFaceDetectMs_ = 0;
     // Auto-selected primary face id for hysteresis handoff. An incoming
     // detection only steals the "primary" slot from the currently-tracked
@@ -447,10 +412,8 @@ private:
     int64_t lastCaptureSendMs_ = 0;
     int64_t minFrameIntervalMs_ = 33; // ~30fps max per stream
 
-    // Timestamp-based echo suppression. When we broadcast MODE_CHANGE or
-    // SETTINGS_SYNC, the Android client may echo them back after its own
-    // 200 ms suppression window. We ignore inbound messages of the same
-    // type for 500 ms after our last outbound broadcast.
+    // Echo suppression for our own broadcasts — Android re-emits within
+    // its 200 ms window, we ignore inbound for 500 ms after our send.
     int64_t lastModeBroadcastMs_ = 0;
     int64_t lastSettingsBroadcastMs_ = 0;
     static constexpr int64_t kSyncEchoSuppressMs = 500;

@@ -20,11 +20,18 @@ Rectangle {
         anchors.rightMargin: Theme.dp(24)
         spacing: Theme.dp(28)
 
-        // Depth — label in secondary, value in primary
         Row {
             spacing: 0
             Text { text: "Depth: "; color: Theme.textSecondary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
-            Text { text: alice && alice.depth > 0 ? alice.depth.toFixed(3) + "m" : "—"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
+            Text {
+                // padEnd with non-breaking space so "—" and "1.234m"
+                // and "12.345m" all occupy the max "99.999m" width.
+                text: {
+                    var s = alice && alice.depth > 0 ? alice.depth.toFixed(3) + "m" : "—"
+                    return s + "\u00A0".repeat(Math.max(0, 7 - s.length))
+                }
+                color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont
+            }
         }
 
         Row {
