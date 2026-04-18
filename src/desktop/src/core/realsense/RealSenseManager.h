@@ -77,6 +77,24 @@ public:
      */
     float depthAt(float nx, float ny) const;
 
+    /**
+     * Sample a horizontal slice of depth values across the FULL frame
+     * width at normalised Y = ny. Produces a left-to-right "top-view"
+     * — each sample is the depth at a different lateral position in
+     * the scene, so objects at different horizontal positions show
+     * up at their respective depths in the plot, not collapsed into
+     * a single value the way a vertical column does on a flat wall.
+     *
+     * Returns `samples` depth readings in meters, evenly spaced across
+     * the frame width. Zero for pixels with no valid depth. Each
+     * sample is the 3×3 local median around the chosen pixel so
+     * one-pixel sensor holes don't spike the trace.
+     *
+     * Safe to call from any thread — takes the depth-cache mutex for
+     * the duration of the copy + per-sample median.
+     */
+    QVariantList depthHorizontalSlice(float ny, int samples) const;
+
     // Enable/disable generation of the colorized depth visualisation.
     // When disabled, captureLoop skips the expensive colorizeDepth() call
     // entirely. Safe to call from any thread.

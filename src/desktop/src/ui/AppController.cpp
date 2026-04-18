@@ -834,6 +834,24 @@ void AppController::setUiScaleFactor(float v) {
     settings_->setUiScaleFactor(v);
 }
 
+QVariantList AppController::depthColumnAtFocus(int samples) const {
+    // Named "column" for QML-facing compatibility but produces a
+    // horizontal slice (top-view) — see depthHorizontalSlice doc.
+    float mx = 0.5f, my = 0.5f;
+    realsense_->getMeasurementPosition(mx, my);
+    return realsense_->depthHorizontalSlice(my, samples);
+}
+
+float AppController::focusDepthMeters() const {
+    // Resolve current motor position through the mapping to get the
+    // lens's implied focus distance. -1 if no mapping is loaded (QML
+    // uses that as a "don't draw the focus line" sentinel).
+    const auto &m = autofocus_->currentMapping();
+    if (!m) return -1.0f;
+    auto depth = m->getDepthForMotor(motor_->currentPosition());
+    return depth ? *depth : -1.0f;
+}
+
 void AppController::setRealSenseResolution(int dw, int dh, int df, int cw, int ch, int cf) {
     realsense_->setStreamConfig(dw, dh, df, cw, ch, cf);
     settings_->setDepthResolution(dw, dh, df);

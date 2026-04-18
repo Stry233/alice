@@ -104,11 +104,51 @@ Item {
                         }
 
                         Item {
+                            id: wideDepthRow
                             Layout.fillWidth: true; Layout.fillHeight: true
+
+                            // LiDAR waveform sidebar — ~15 % of the depth
+                            // panel width, gated on the autofocus pipeline
+                            // being ready (mapping loaded + RealSense
+                            // streaming). Shown in every focus mode
+                            // including MF so the operator always has a
+                            // live oscilloscope view of what the lens is
+                            // pointed at vs. where it's actually focused.
+                            readonly property bool lidarVisible:
+                                alice && alice.hasMapping && alice.realSenseConnected
+                            readonly property int lidarTargetWidth:
+                                Math.max(Theme.dp(92),
+                                         Math.round(wideDepthRow.width * 0.15))
+                            // Animated width actually applied to the
+                            // sidebar (and symmetrically subtracted from
+                            // the depth preview's rightMargin). Drives
+                            // both the slide-in of the waveform and the
+                            // shrink of the depth preview so they stay
+                            // synchronised frame-for-frame.
+                            readonly property int lidarWidth: lidarVisible ? lidarTargetWidth : 0
+                            readonly property int lidarRightMargin: lidarWidth > 0
+                                ? (lidarWidth + Theme.dp(6))
+                                : 0
 
                             Rectangle {
                                 id: wideDepthRect
-                                anchors.fill: parent; color: Theme.well; radius: Theme.radiusSm
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.rightMargin: wideDepthRow.lidarRightMargin
+                                // Shrink/grow together with the sibling
+                                // waveform. Theme.durationNormal +
+                                // OutCubic matches the rest of the app's
+                                // panel transitions (BadgePopover slide,
+                                // ModeToggle colour crossfade, etc.).
+                                Behavior on anchors.rightMargin {
+                                    NumberAnimation {
+                                        duration: Theme.durationNormal
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                                color: Theme.well; radius: Theme.radiusSm
 
                                 // Use the VideoRenderer to detect actual aspect ratio
                                 // Default 16:9; updates when renderer gets its first frame
@@ -223,6 +263,52 @@ Item {
                                         var ny = Math.max(0, Math.min(1, (my - wideDepthRect.vidY) / wideDepthRect.fitH))
                                         if (isJump) alice.processTap(nx, ny)
                                         else alice.setMeasurementPosition(nx, ny)
+                                    }
+                                }
+                            }
+
+                            LidarWaveform {
+                                id: wideLidar
+                                anchors.top: parent.top
+                                anchors.bottom: parent.bottom
+                                anchors.right: parent.right
+                                width: wideDepthRow.lidarWidth
+                                // visible stays true across the whole
+                                // fade so Behavior on opacity can play
+                                // to completion. The width collapsing
+                                // to 0 plus opacity 0 effectively hides
+                                // it for input purposes.
+                                visible: opacity > 0.01
+                                opacity: wideDepthRow.lidarVisible ? 1.0 : 0.0
+                                Behavior on width {
+                                    NumberAnimation {
+                                        duration: Theme.durationNormal
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                                Behavior on opacity {
+                                    NumberAnimation {
+                                        duration: Theme.durationNormal
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+
+                                measuredDepth: alice ? alice.depth : 0
+                                // focusDepthMeters() is a Q_INVOKABLE with
+                                // no NOTIFY — a plain property binding would
+                                // only evaluate once. Polled in the same
+                                // Timer that refreshes the depth column so
+                                // the green reference line tracks the motor
+                                // position continuously.
+                                Timer {
+                                    interval: 100
+                                    running: wideLidar.opacity > 0
+                                    repeat: true
+                                    triggeredOnStart: true
+                                    onTriggered: {
+                                        if (!alice) return
+                                        wideLidar.column = alice.depthColumnAtFocus(400)
+                                        wideLidar.focusDepth = alice.focusDepthMeters()
                                     }
                                 }
                             }
@@ -660,10 +746,33 @@ Item {
                         }
                     }
                     Item {
+                        id: stdDepthRow
                         Layout.fillWidth: true; Layout.fillHeight: true
+
+                        readonly property bool lidarVisible:
+                            alice && alice.hasMapping && alice.realSenseConnected
+                        readonly property int lidarTargetWidth:
+                            Math.max(Theme.dp(92),
+                                     Math.round(stdDepthRow.width * 0.15))
+                        readonly property int lidarWidth: lidarVisible ? lidarTargetWidth : 0
+                        readonly property int lidarRightMargin: lidarWidth > 0
+                            ? (lidarWidth + Theme.dp(6))
+                            : 0
+
                         Rectangle {
                             id: stdDepthRect
-                            anchors.fill: parent; color: Theme.well; radius: Theme.radiusSm
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.left: parent.left
+                            anchors.right: parent.right
+                            anchors.rightMargin: stdDepthRow.lidarRightMargin
+                            Behavior on anchors.rightMargin {
+                                NumberAnimation {
+                                    duration: Theme.durationNormal
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            color: Theme.well; radius: Theme.radiusSm
 
                             property real vidAspect: 16.0 / 9.0
                             property real fitW: Math.min(width, height * vidAspect)
@@ -749,6 +858,41 @@ Item {
                                     var ny = Math.max(0, Math.min(1, (my - stdDepthRect.vidY) / stdDepthRect.fitH))
                                     if (isJump) alice.processTap(nx, ny)
                                     else alice.setMeasurementPosition(nx, ny)
+                                }
+                            }
+                        }
+
+                        LidarWaveform {
+                            id: stdLidar
+                            anchors.top: parent.top
+                            anchors.bottom: parent.bottom
+                            anchors.right: parent.right
+                            width: stdDepthRow.lidarWidth
+                            visible: opacity > 0.01
+                            opacity: stdDepthRow.lidarVisible ? 1.0 : 0.0
+                            Behavior on width {
+                                NumberAnimation {
+                                    duration: Theme.durationNormal
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+                            Behavior on opacity {
+                                NumberAnimation {
+                                    duration: Theme.durationNormal
+                                    easing.type: Easing.OutCubic
+                                }
+                            }
+
+                            measuredDepth: alice ? alice.depth : 0
+                            Timer {
+                                interval: 100
+                                running: stdLidar.opacity > 0
+                                repeat: true
+                                triggeredOnStart: true
+                                onTriggered: {
+                                    if (!alice) return
+                                    stdLidar.column = alice.depthColumnAtFocus(400)
+                                    stdLidar.focusDepth = alice.focusDepthMeters()
                                 }
                             }
                         }

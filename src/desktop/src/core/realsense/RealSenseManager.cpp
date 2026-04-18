@@ -506,6 +506,80 @@ float RealSenseManager::depthAt(float nx, float ny) const {
     return static_cast<float>(median) / 1000.0f; // mm → m
 }
 
+QVariantList RealSenseManager::depthHorizontalSlice(float ny, int samples) const {
+    QVariantList out;
+    if (samples <= 0) return out;
+    out.reserve(samples);
+
+    QMutexLocker lock(&depthCacheMutex_);
+    if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) {
+        // Still return the requested number of slots (all zeros) so the
+        // QML side can render a flat baseline instead of going empty
+        // and collapsing the layout on every frame the camera glitches.
+        for (int i = 0; i < samples; ++i) out.append(0.0f);
+        return out;
+    }
+
+    const int baseY = std::clamp(static_cast<int>(ny * depthCacheH_), 0,
+                                 depthCacheH_ - 1);
+
+    // For each of the `samples` horizontal positions, probe THREE
+    // vertical rows spaced ~3% of the frame height apart. Without this
+    // band-sampling a scene that has lateral structure (a person left
+    // of frame vs. wall behind them) but uniform depth at the
+    // crosshair's single row still collapses to one flat line — the
+    // three rows pick up depth variation at each lateral position
+    // that reads as the vertical "spread" in a real top-down view.
+    //
+    // Returns 3 * samples depths, consecutive triplets sharing an X.
+    const int rowOffset = std::max(2, depthCacheH_ / 32);
+    const int rowYs[3] = {
+        std::clamp(baseY - rowOffset, 0, depthCacheH_ - 1),
+        baseY,
+        std::clamp(baseY + rowOffset, 0, depthCacheH_ - 1),
+    };
+
+    for (int i = 0; i < samples; ++i) {
+        const int cx = static_cast<int>(
+            (static_cast<float>(i) / (samples - 1 > 0 ? samples - 1 : 1))
+            * (depthCacheW_ - 1));
+
+      for (int rowIdx = 0; rowIdx < 3; ++rowIdx) {
+        const int cy = rowYs[rowIdx];
+
+        uint16_t neighbours[9];
+        int n = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+            const int y = cy + dy;
+            if (y < 0 || y >= depthCacheH_) continue;
+            for (int dx = -1; dx <= 1; ++dx) {
+                const int x = cx + dx;
+                if (x < 0 || x >= depthCacheW_) continue;
+                const uint16_t d = depthCache_[y * depthCacheW_ + x];
+                if (d >= static_cast<uint16_t>(minValidDepth_) &&
+                    d <= static_cast<uint16_t>(maxValidDepth_)) {
+                    neighbours[n++] = d;
+                }
+            }
+        }
+
+        if (n == 0) {
+            out.append(0.0f);
+            continue;
+        }
+        // 9-element insertion sort — faster than std::sort for this size.
+        for (int k = 1; k < n; ++k) {
+            uint16_t v = neighbours[k];
+            int j = k - 1;
+            while (j >= 0 && neighbours[j] > v) { neighbours[j + 1] = neighbours[j]; --j; }
+            neighbours[j + 1] = v;
+        }
+        out.append(static_cast<float>(neighbours[n / 2]) / 1000.0f);
+      }
+    }
+    return out;
+}
+
 QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int height) {
     // Pre-built LUT: depth value (0..65535 mm) → RGB triple. Constructed
     // lazily on first call and reused for the process lifetime. 192 KiB fits

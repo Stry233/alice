@@ -257,6 +257,15 @@ public:
     Q_INVOKABLE float uiScaleFactor() const;
     Q_INVOKABLE void setUiScaleFactor(float v);
 
+    // ── LiDAR waveform overlay (OPS view) ──────────────────────────────
+    // Samples a vertical column of depth values at the current
+    // measurement X so the waveform draws the "point cloud" slice
+    // directly beneath the crosshair. focusDepthMeters() is the motor's
+    // position run back through the current mapping — that's the
+    // "where is the lens focused" reference line.
+    Q_INVOKABLE QVariantList depthColumnAtFocus(int samples) const;
+    Q_INVOKABLE float focusDepthMeters() const;
+
     Q_INVOKABLE void setRealSenseResolution(int depthW, int depthH, int depthFps, int colorW, int colorH, int colorFps);
     Q_INVOKABLE void setCaptureCardResolution(int w, int h, int fps);
 
