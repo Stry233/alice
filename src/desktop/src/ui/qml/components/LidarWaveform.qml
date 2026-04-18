@@ -195,13 +195,6 @@ Item {
                     ctx.lineTo(w, my + 0.5)
                     ctx.stroke()
                     ctx.setLineDash([])
-                    ctx.fillStyle = Theme.warning
-                    ctx.beginPath()
-                    ctx.moveTo(0, my)
-                    ctx.lineTo(Theme.dp(5), my - Theme.dp(3))
-                    ctx.lineTo(Theme.dp(5), my + Theme.dp(3))
-                    ctx.closePath()
-                    ctx.fill()
                 } else {
                     // Off-window: draw a caret at the nearer edge
                     // pointing out of the visible range so the
@@ -226,13 +219,6 @@ Item {
             ctx.moveTo(0, cy + 0.5)
             ctx.lineTo(w, cy + 0.5)
             ctx.stroke()
-            ctx.fillStyle = Theme.success
-            ctx.beginPath()
-            ctx.moveTo(w, cy)
-            ctx.lineTo(w - Theme.dp(5), cy - Theme.dp(3))
-            ctx.lineTo(w - Theme.dp(5), cy + Theme.dp(3))
-            ctx.closePath()
-            ctx.fill()
         }
 
         // 30 Hz safety repaint — column/focus bindings push paints on

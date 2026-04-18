@@ -52,6 +52,23 @@ public:
     void setValidRange(int minMm, int maxMm);
 
     /**
+     * Depth scale: metres per raw Z16 unit. librealsense's default for
+     * D4xx is 0.001 (one unit = 1 mm). Setting the sensor's
+     * DEPTH_UNITS option to 0.0001 gives 0.1 mm per unit — a 10× finer
+     * quantization the RealSense firmware is capable of producing
+     * internally from sub-pixel disparity. Combined with the temporal
+     * filter below, that unlocks sub-millimetre precision on a
+     * stationary subject.
+     *
+     * Call this once after pipeline.start() with the value returned by
+     * rs2::depth_sensor::get_depth_scale(). Existing callers that
+     * never call it get the legacy 0.001 default — all pre-scale test
+     * data was expressed in mm-quantised uint16 and keeps working.
+     */
+    void setDepthScale(float metersPerUnit);
+    float depthScale() const { return depthScale_; }
+
+    /**
      * Temporal smoothing base.
      *   0.05  — very smooth, slow response (~1 s to 95 % settled)
      *   0.30  — default, balanced (cinema-appropriate)
@@ -72,7 +89,11 @@ private:
     static constexpr float kTemporalConfGrowth = 0.15f; // ~7 stable frames → 1.0
 
     // ── State ───────────────────────────────────────────────────────
-    float stateMm_ = 0.0f;
+    // Internal state is always in metres. Previous version used mm
+    // (stateMm_) which quantized to 1 mm on every update even when the
+    // input had finer precision — that hard floor defeated any sub-mm
+    // benefit from the spatial / temporal filters applied upstream.
+    float stateM_ = 0.0f;
     bool initialized_ = false;
     int staleFrames_ = 0;
     float lastTargetX_ = -1.0f;
@@ -88,13 +109,22 @@ private:
     float temporalConf_ = 0.0f;
 
     // ── Params ──────────────────────────────────────────────────────
-    int minValidMm_ = 200;
+    // Validity range is specified in mm (user-visible API) but compared
+    // against raw Z16 units internally after dividing by depthScale_.
+    // Keeping the public API in mm decouples it from the sensor's
+    // depth-units option.
+    int minValidMm_ = 150;
     int maxValidMm_ = 10000;
     float baseAlpha_ = 0.30f;
 
+    // Metres per raw Z16 unit. 0.001 matches the librealsense default
+    // (1 unit = 1 mm); set to 0.0001 by RealSenseManager when the
+    // sensor's DEPTH_UNITS option can be reconfigured to 0.1 mm.
+    float depthScale_ = 0.001f;
+
     // Sampling helpers
     struct SampleResult {
-        float medianMm;
+        float medianM;           // metres (with whatever sub-mm precision the scale affords)
         float spatialConfidence; // 0-1
         bool valid;
     };

@@ -129,7 +129,15 @@ public:
     /** Read the currently-stored preference; empty if auto-pick. */
     QString preferredDeviceId() const { return preferredSerial_; }
 
-    static constexpr int kDefaultMinValidDepth = 200;
+    // D415 / D435 / D435i measure reliably down to ~110 mm (the stereo
+    // minimum depth below which the cameras' fields of view stop
+    // overlapping). Older default of 200 mm was clipping legitimate
+    // close-focus readings for macro and product shots. 150 mm gives
+    // a ~40 mm cushion above the hardware minimum — conservative
+    // enough that we don't publish readings from the noise floor
+    // right at the edge, aggressive enough to unlock the useful
+    // close-focus range the sensor actually supports.
+    static constexpr int kDefaultMinValidDepth = 150;
     static constexpr int kDefaultMaxValidDepth = 10000;
 
     void setMinValidDepth(int mm);
@@ -200,6 +208,15 @@ private:
     std::vector<uint16_t> depthCache_;
     int depthCacheW_ = 0;
     int depthCacheH_ = 0;
+
+    // Sensor depth scale in metres per raw Z16 unit. Default 0.001
+    // (1 mm per unit) matches librealsense's factory configuration; the
+    // capture loop overwrites this with the actual reported scale after
+    // pipeline.start(), typically 0.0001 when we succeed in setting
+    // RS2_OPTION_DEPTH_UNITS to sub-mm resolution. Atomic so the UI
+    // thread's depthAt() / depthHorizontalSlice() can read without a
+    // lock while the capture thread refreshes it on reconnect.
+    std::atomic<float> depthScaleM_{0.001f};
 
     // Device identity read from RS2_CAMERA_INFO_NAME when the pipeline starts.
     // Protected by its own mutex so UI threads can read it safely.
