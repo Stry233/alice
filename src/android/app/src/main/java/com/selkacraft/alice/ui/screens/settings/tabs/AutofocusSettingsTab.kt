@@ -227,42 +227,41 @@ fun AutofocusSettingsTab(
                     onValueChange = { displayName ->
                         val internalName = focusModeInternalNames[displayName] ?: displayName
                         settingsManager.setAutofocusMode(internalName)
-                        }
-                    )
+                    }
+                )
 
-                    SwitchSettingItem(
-                        label = "Focus Smoothing",
-                        checked = autofocusSmoothing,
-                        onCheckedChange = { settingsManager.setAutofocusSmoothing(it) }
-                    )
+                SwitchSettingItem(
+                    label = "Focus Smoothing",
+                    checked = autofocusSmoothing,
+                    onCheckedChange = { settingsManager.setAutofocusSmoothing(it) }
+                )
 
-                    SliderSettingItem(
-                        label = "Response Speed",
-                        value = autofocusResponseSpeed.toFloat(),
-                        onValueChange = { settingsManager.setAutofocusResponseSpeed(it.toInt()) },
-                        valueRange = 10f..100f,
-                        steps = 90,
-                        displayFormat = { "${it.toInt()}%" }
-                    )
+                SliderSettingItem(
+                    label = "Response Speed",
+                    value = autofocusResponseSpeed.toFloat(),
+                    onValueChange = { settingsManager.setAutofocusResponseSpeed(it.toInt()) },
+                    valueRange = 10f..100f,
+                    steps = 90,
+                    displayFormat = { "${it.toInt()}%" }
+                )
 
-                    SliderSettingItem(
-                        label = "Confidence Threshold",
-                        value = autofocusConfidenceThreshold,
-                        onValueChange = { settingsManager.setAutofocusConfidenceThreshold(it) },
-                        valueRange = 0.3f..1f,
-                        steps = 70,
-                        displayFormat = { "${(it * 100).toInt()}%" }
-                    )
+                SliderSettingItem(
+                    label = "Confidence Threshold",
+                    value = autofocusConfidenceThreshold,
+                    onValueChange = { settingsManager.setAutofocusConfidenceThreshold(it) },
+                    valueRange = 0.3f..1f,
+                    steps = 70,
+                    displayFormat = { "${(it * 100).toInt()}%" }
+                )
 
-                    SliderSettingItem(
-                        label = "Focus Hold Time",
-                        value = autofocusFocusHoldTime.toFloat(),
-                        onValueChange = { settingsManager.setAutofocusFocusHoldTime(it.toInt()) },
-                        valueRange = 100f..2000f,
-                        steps = 19,
-                        displayFormat = { "${it.toInt()} ms" }
-                    )
-                }
+                SliderSettingItem(
+                    label = "Focus Hold Time",
+                    value = autofocusFocusHoldTime.toFloat(),
+                    onValueChange = { settingsManager.setAutofocusFocusHoldTime(it.toInt()) },
+                    valueRange = 100f..2000f,
+                    steps = 19,
+                    displayFormat = { "${it.toInt()} ms" }
+                )
             }
         }
 

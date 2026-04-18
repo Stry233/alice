@@ -186,6 +186,11 @@ AppController::AppController(QObject *parent)
     connect(syncServer_.get(), &SyncServer::clientConnected,
             this, [this]() {
         log("NETWORK", "Android client connected");
+        // Desktop is authoritative — push current mode/settings/mapping
+        // so the phone adopts our state rather than echoing back its own.
+        broadcastModeChange();
+        broadcastSettings();
+        broadcastCurrentMapping();
         emit syncStateChanged();
     });
     connect(syncServer_.get(), &SyncServer::clientDisconnected,
