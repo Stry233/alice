@@ -62,16 +62,38 @@ void RealSenseManager::setMeasurementPosition(float x, float y) {
     // Publish to the lock-free cache used by the UI thread.
     measureXCached_.store(cx, std::memory_order_relaxed);
     measureYCached_.store(cy, std::memory_order_relaxed);
+    // Reset the estimator. User-initiated moves (tap, drag) should
+    // see the new position's depth with zero context from the old
+    // position — the EMA would otherwise blend old-crosshair depths
+    // into the reading during a slow drag because sub-2% per-frame
+    // moves never trip the estimator's auto-reset.
+    QMutexLocker lock(&estimatorParamsMutex_);
+    estimator_.reset();
+}
+
+void RealSenseManager::setTrackedPosition(float x, float y) {
+    // Same position update path as the user-move variant above, but
+    // WITHOUT resetting the estimator. The AF-F face tracker moves
+    // the crosshair every color frame by sub-pixel amounts as it
+    // smooths the face bbox; the EMA's continuity across those moves
+    // is what makes the depth reading stable under a tracked face.
+    const float cx = std::clamp(x, 0.0f, 1.0f);
+    const float cy = std::clamp(y, 0.0f, 1.0f);
+    {
+        QMutexLocker lock(&positionMutex_);
+        measureX_ = cx;
+        measureY_ = cy;
+    }
+    measureXCached_.store(cx, std::memory_order_relaxed);
+    measureYCached_.store(cy, std::memory_order_relaxed);
 }
 
 void RealSenseManager::jumpToPosition(float x, float y) {
+    // setMeasurementPosition already resets the estimator. Kept as a
+    // separate method so the QML side has a self-documenting name
+    // for the tap-to-focus gesture, and because processTap piggybacks
+    // on this entry point to also update the AF focus target.
     setMeasurementPosition(x, y);
-    // Clear the estimator state so the capture thread's very next frame
-    // samples the new target without any EMA blending against the old
-    // position's depth. Serialised on the same mutex that capture uses
-    // around estimator_.process() so we never race a reset with a frame.
-    QMutexLocker lock(&estimatorParamsMutex_);
-    estimator_.reset();
 }
 
 void RealSenseManager::getMeasurementPosition(float &x, float &y) const {
@@ -441,13 +463,33 @@ void RealSenseManager::captureLoop() {
     rs2::spatial_filter spatial;
     rs2::temporal_filter temporal;
     try {
+        // Spatial: light edge-preserving smoothing. alpha 0.25 (was
+        // 0.5) because the estimator's 7×7 ROI median already absorbs
+        // per-frame noise, and a too-aggressive spatial filter smears
+        // depth gradients (e.g. the receding-floor plane) across
+        // adjacent pixels, which looked like jitter in the LiDAR
+        // waveform top-view.
         spatial.set_option(RS2_OPTION_FILTER_MAGNITUDE, 2);
-        spatial.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 0.5f);
+        spatial.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 0.25f);
         spatial.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
-        temporal.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 0.4f);
+
+        // Temporal: alpha 1.0 means the current frame passes through
+        // unmixed — NO IIR smoothing. Previously we used 0.4 which
+        // mixed 60 % of the prior frame into every pixel; on an
+        // abrupt scene change (close object removed, far wall
+        // revealed) that meant the measurement the estimator sees
+        // ramps over 3–5 frames even though the subject matter
+        // changed instantaneously. The operator saw a ~150 ms
+        // "freeze" on small-to-large transitions because our
+        // discontinuity gate could only chase the filter's ramped
+        // output, not leap ahead of it.
+        //
+        // We KEEP the filter enabled because HOLES_FILL uses its
+        // per-pixel history to fill transient drops — that's the
+        // genuinely useful part. alpha = 1 disables the smoothing
+        // while preserving the hole-fill persistence.
+        temporal.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 1.0f);
         temporal.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
-        // "Valid in 2/4 frames" — fastest persistence that still
-        // survives a one-frame stereo miss.
         temporal.set_option(RS2_OPTION_HOLES_FILL, 3);
     } catch (...) {
         // Filter option-setting can throw on older firmware — falling
@@ -517,6 +559,21 @@ void RealSenseManager::captureLoop() {
                     depth_ = reading.valueM;
                     confidence_ = reading.confidence;
                     emit depthChanged(reading.valueM, reading.confidence);
+                    invalidStreak_ = 0;
+                } else {
+                    // Persistent invalidity: after ~kInvalidClearFrames in
+                    // a row without a usable reading (e.g. a drag landed
+                    // on a region with no stereo matches at all), broadcast
+                    // a zeroed signal so the UI stops painting the last
+                    // valid depth from the OLD crosshair position. Without
+                    // this the UI indistinguishable from a leak of old
+                    // context, which is exactly what a tap-to-focus move
+                    // is supposed to discard.
+                    if (++invalidStreak_ == kInvalidClearFrames) {
+                        depth_ = 0.0f;
+                        confidence_ = 0.0f;
+                        emit depthChanged(0.0f, 0.0f);
+                    }
                 }
 
                 // Cache the aligned depth frame for on-demand point sampling

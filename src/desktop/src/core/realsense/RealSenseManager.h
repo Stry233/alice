@@ -51,17 +51,32 @@ public:
     /** Bus identifier (typically "USB 3.x") for the attached camera. */
     QString deviceBus() const { QMutexLocker l(&deviceInfoMutex_); return deviceBus_; }
 
+    /**
+     * User-initiated move (tap, drag). Always resets the depth
+     * estimator so the next reading samples the new location with no
+     * context from the previous position — a drag across the scene
+     * shouldn't mix in the old crosshair's depth through the EMA.
+     */
     void setMeasurementPosition(float x, float y);
+
+    /**
+     * Autonomous tracker update (AF-F face tracker). DOES NOT reset
+     * the estimator — the tracker moves the crosshair by sub-pixel
+     * amounts each frame as it smooths the face bbox, so the EMA's
+     * continuity across those moves is beneficial rather than wrong.
+     * The estimator's own per-frame delta check still catches a big
+     * tracker jump (face ID switch, lost-and-reacquired track).
+     */
+    void setTrackedPosition(float x, float y);
+
     void getMeasurementPosition(float &x, float &y) const;
 
     /**
-     * Treat the upcoming measurement as a teleport to a new target:
-     * clear the depth estimator's temporal state so the next reading is
-     * taken without any blending from the old position. Called by the UI
-     * on mouse-press / tap events. Drag events keep using
-     * setMeasurementPosition alone — the auto per-frame delta check still
-     * covers big single-frame jumps, and the filter intentionally carries
-     * some context across small drifts.
+     * Alias for setMeasurementPosition — kept for the existing
+     * Q_INVOKABLE tap surface. Both forms reset the estimator now;
+     * the split exists only so tap events also broadcast the
+     * position to the sync peer and update the AF focus point,
+     * which the bare setter doesn't do.
      */
     void jumpToPosition(float x, float y);
 
@@ -240,6 +255,16 @@ private:
 
     // Suppress repeated "no device" errors (same pattern as motor)
     std::atomic<bool> lastInitFailed_{false};
+
+    // Consecutive frames the estimator has reported !isValid. Reset on
+    // each valid reading. Once it reaches kInvalidClearFrames, we emit
+    // a zeroed depthChanged so the UI blanks rather than keeping the
+    // pre-drag depth visible.
+    int invalidStreak_ = 0;
+    // ~0.25 s at 30 FPS: long enough that transient per-frame holes
+    // don't flicker the UI, short enough that the user doesn't perceive
+    // stale depth sticking after a drag.
+    static constexpr int kInvalidClearFrames = 8;
 
     // Configurable stream resolution (default 640x480@30)
     int depthWidth_ = 640, depthHeight_ = 480, depthFps_ = 30;

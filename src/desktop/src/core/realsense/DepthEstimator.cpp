@@ -164,8 +164,33 @@ DepthEstimator::Reading DepthEstimator::process(
             stateM_ = measurementM;
             temporalConf_ = 0.0f;
         } else {
-            const float alpha = std::clamp(baseAlpha_ * spatialConf, 0.0f, 1.0f);
-            stateM_ = alpha * measurementM + (1.0f - alpha) * stateM_;
+            // Adaptive alpha. On a stable scene (relDelta near 0) we
+            // want heavy smoothing — the ROI median already denoises,
+            // and the EMA's further averaging cuts sub-mm jitter on a
+            // stationary subject. On a genuine transition (relDelta
+            // approaching but not crossing kDiscontinuityDelta), we
+            // want to track fast so the operator doesn't see lag.
+            //
+            // Linearly ramp the alpha from baseAlpha at relDelta ≤ 5 %
+            // up to 1.0 at relDelta = kDiscontinuityDelta. Anything
+            // ≥ kDiscontinuityDelta is handled by the snap branch
+            // above, so the ramp reaches 1.0 exactly at the boundary.
+            // This fixes the "small-to-large" freeze: a transition in
+            // the 10-20 % range previously paid the full EMA lag
+            // (~6 frames to 90 % settled), now it snaps in 1-2 frames.
+            constexpr float kQuietRelDelta = 0.05f;
+            const float effectiveAlpha = [&]() {
+                const float alphaQuiet = baseAlpha_ * spatialConf;
+                if (relDelta <= kQuietRelDelta) return alphaQuiet;
+                const float t = std::clamp(
+                    (relDelta - kQuietRelDelta) /
+                        (kDiscontinuityDelta - kQuietRelDelta),
+                    0.0f, 1.0f);
+                return std::clamp(alphaQuiet + t * (1.0f - alphaQuiet),
+                                  0.02f, 1.0f);
+            }();
+            stateM_ = effectiveAlpha * measurementM
+                    + (1.0f - effectiveAlpha) * stateM_;
             temporalConf_ = std::min(1.0f, temporalConf_ + kTemporalConfGrowth);
         }
     }

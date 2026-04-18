@@ -280,6 +280,12 @@ void AppController::initialize() {
     // Apply settings to depth sensor
     realsense_->setMinValidDepth(settings_->depthMinDistance());
     realsense_->setMaxValidDepth(settings_->depthMaxDistance());
+    // Push the persisted UI slider value through the setter so the
+    // estimator's baseAlpha matches what the slider displays. Before
+    // this call the estimator ran with its 0.30 default regardless of
+    // slider position — an invisible UI/actual mismatch that produced
+    // a "slider says responsive, readings feel sluggish" behaviour.
+    setDepthSmoothing(depthSmoothingSliderValue_);
 
     // Restore saved resolution settings
     realsense_->setStreamConfig(
@@ -1060,7 +1066,12 @@ void AppController::onColorFrame(const QImage &frame) {
 
         if (primary) {
             const QPointF fp = primary->focusPoint();
-            realsense_->setMeasurementPosition(
+            // Tracker path — keeps the EMA continuity across the
+            // face bbox's per-frame smoothing. Using the plain
+            // setMeasurementPosition here would reset the estimator
+            // on every tracker update, making the depth reading
+            // flicker as fast as the sensor's per-pixel noise.
+            realsense_->setTrackedPosition(
                 static_cast<float>(fp.x()),
                 static_cast<float>(fp.y()));
             // Keep focusX_/focusY_ in AutofocusController in sync so any

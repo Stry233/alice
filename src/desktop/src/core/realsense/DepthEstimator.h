@@ -81,7 +81,20 @@ public:
 private:
     // ── Tunables ────────────────────────────────────────────────────
     static constexpr int kRoiRadius = 3;              // 7×7 sample window
-    static constexpr int kMinValidPixels = 8;         // require ≥8 of 49
+    // Minimum valid pixels in the 7×7 ROI for a trustworthy median.
+    // 4 is enough to yield a defined IQR (q25, q75 index into a sorted
+    // array of length ≥ 4). Lower than the previous 8 because at 4-5 m
+    // the D4xx stereo matcher routinely returns only 4-6 valid pixels
+    // per small ROI on low-texture subjects (walls, skin, paper). The
+    // old threshold would reject those frames wholesale — the capture
+    // thread's "emit only when valid" guard would then freeze the UI's
+    // depth display at the LAST valid reading from before the drag,
+    // producing the user-reported "at 4.75 m it stays stuck on the
+    // previous depth" behaviour. A loose threshold plus honestly-low
+    // spatial confidence is strictly better: consumers that gate on
+    // confidence (autofocus at ≥ 0.7) still won't drive on the noisy
+    // reading, while the UI shows the actual distance.
+    static constexpr int kMinValidPixels = 4;
     static constexpr float kDiscontinuityDelta = 0.25f;      // min 25 % rel. change
     static constexpr float kDiscontinuityEvidence = 0.15f;   // relΔ × conf bar
     static constexpr float kPositionResetThresholdSq = 4e-4f; // 2 % of frame
