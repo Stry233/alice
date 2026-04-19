@@ -202,7 +202,7 @@ class AutofocusMappingManager(private val context: Context) {
             }
         }
 
-    // Preset creation methods - Updated to use new metadata structure
+    // Preset creation methods
 
     private fun createLinearMapping(): AutofocusMapping {
         return AutofocusMapping(

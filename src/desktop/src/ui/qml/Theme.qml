@@ -100,8 +100,14 @@ QtObject {
 
     // ── Breakpoints (logical, not scaled) ──────────────────────────
     readonly property int breakpointCompact: 1024
-    readonly property int breakpointStandard: 1280
-    readonly property int breakpointWide: 1600
+    // Layout breakpoints are compared against raw window width, so they
+    // must themselves scale with the user's UI zoom — at 0.8× a 1400 px
+    // window has ~1750 logical design pixels to work with and deserves
+    // the wide layout, while at 1.5× the same window only has ~933
+    // logical pixels and needs the compact fallback. Wrapping the
+    // thresholds in dp() makes that automatic.
+    readonly property int breakpointStandard: dp(1280)
+    readonly property int breakpointWide: dp(1600)
 
     // ── Camera zoom ────────────────────────────────────────────────
     readonly property real zoomMin: 1.0

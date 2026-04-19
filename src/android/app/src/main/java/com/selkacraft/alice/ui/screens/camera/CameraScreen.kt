@@ -172,8 +172,10 @@ fun CameraScreen(
                     isEffectivelyConnected = effectiveMotorConnected
                 )
 
-                // Single FAB that adapts behavior based on AF state
-                val showAfFab = isAutofocusAvailable && autofocusEnabled
+                // The mode picker is the enable toggle — MANUAL = AF off,
+                // anything else = AF on. Show it whenever the hardware +
+                // mapping prerequisites are met so the user can switch.
+                val showAfFab = isAutofocusAvailable
                 ExpandableAutofocusFab(
                     isExpanded = isFabExpanded && showAfFab,
                     onExpandChange = { expanded ->

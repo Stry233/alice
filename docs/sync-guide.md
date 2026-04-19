@@ -17,7 +17,7 @@ Both apps show a green "Linked" indicator when paired.
 | Depth colormap | Desktop -> Android | JPEG, quality set by "Depth overlay" slider. Clamped to 640x480. |
 | RealSense color | Desktop -> Android | JPEG, same quality as depth overlay. |
 | Motor position | Bidirectional | Either side can move the motor. |
-| Autofocus mode | Bidirectional | Mode and enable/disable state. |
+| Autofocus mode | Bidirectional | Desktop wins on connect — the phone adopts the desktop's mode. After that either side can change it. |
 | Depth readings | Desktop -> Android | Current depth + confidence. |
 | Face tracking | Desktop -> Android | Bounding boxes, tracking IDs, eye positions, selected face. |
 | Measurement point | Bidirectional | Tap-to-focus crosshair position. |

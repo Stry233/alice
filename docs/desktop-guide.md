@@ -25,7 +25,9 @@ The center panel shows the live capture-card feed (HDMI input). Zoom with the sc
 
 ### Depth Panel
 
-Shows the RealSense color feed with a draggable measurement reticle. Click or drag to move the depth sampling point. The reticle animates smoothly to new positions with a "lock pulse" on the center ring when the target shifts.
+Shows the RealSense color feed with a draggable measurement reticle. Click or drag to move the depth sampling point.
+
+A **LiDAR waveform** overlay sits on the right edge of the depth panel. It plots a top-down slice of the scene at the crosshair row: each column shows depth for a different lateral position. The green line marks the current focus depth (from the motor-to-depth mapping), the amber dashed line marks the measured depth at the crosshair — overlap = in focus.
 
 In AF-F mode, the reticle is replaced by face tracking bounding boxes. Each box shows a tracking ID and confidence percentage. Click a face to pin it as the primary focus target.
 
@@ -44,6 +46,7 @@ The toolbar shows one badge per device: **Motor**, **Depth**, **Cam**, **Sync**.
 - Device model and bus address
 - Uptime or last-seen time
 - Restart / Disconnect / Reconnect buttons
+- A device selector when two or more of the same kind are plugged in (pick which motor / camera / capture card is active)
 
 ### Motor Slider
 
@@ -71,12 +74,17 @@ See [Calibration](calibration.md) for the full process. The CFG > Calibration ta
 |:----|:-------|
 | `Ctrl+1` | Switch to OPS mode |
 | `Ctrl+2` | Switch to CFG mode |
+| `Ctrl++` / `Ctrl+=` | Zoom UI in (scale factor +10%) |
+| `Ctrl+-` | Zoom UI out (scale factor -10%) |
+| `Ctrl+0` | Reset UI zoom to 100% |
 | `M` | Manual focus mode |
 | `S` | AF-S (single) mode |
 | `C` | AF-C (continuous) mode |
 | `F` | AF-F (face tracking) mode |
 | `Space` | Toggle between MF and last AF mode |
 | `Esc` | Return to OPS mode |
+
+UI zoom scales every interface element (text, icons, layout spacing) between 60% and 200%. The chosen factor is persisted across restarts.
 
 ## Window Sizing
 

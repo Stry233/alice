@@ -45,6 +45,39 @@ AutofocusMapping::AutofocusMapping(const std::string &name,
                                    const MappingMetadata &metadata)
     : name_(name), description_(description), points_(points), metadata_(metadata) {}
 
+std::optional<float> AutofocusMapping::getDepthForMotor(int motorPosition) const {
+    if (points_.empty()) return std::nullopt;
+
+    // Sort by motor position so the search below is monotonic. We can't
+    // assume the mapping's natural depth-sort is also motor-sorted
+    // (inverting lenses / reversed motor can reorder).
+    auto sorted = points_;
+    std::sort(sorted.begin(), sorted.end(),
+              [](const MappingPoint &a, const MappingPoint &b) {
+                  return a.motorPosition < b.motorPosition;
+              });
+
+    if (motorPosition <= sorted.front().motorPosition) return sorted.front().depth;
+    if (motorPosition >= sorted.back().motorPosition)  return sorted.back().depth;
+
+    static constexpr int kMotorSpanEpsilon = 1;
+    for (size_t i = 0; i + 1 < sorted.size(); ++i) {
+        if (motorPosition >= sorted[i].motorPosition &&
+            motorPosition <= sorted[i + 1].motorPosition) {
+            const auto &lo = sorted[i];
+            const auto &hi = sorted[i + 1];
+            const int span = hi.motorPosition - lo.motorPosition;
+            if (span <= kMotorSpanEpsilon) {
+                return lo.depth;
+            }
+            const float ratio = static_cast<float>(motorPosition - lo.motorPosition)
+                              / static_cast<float>(span);
+            return lo.depth + ratio * (hi.depth - lo.depth);
+        }
+    }
+    return std::nullopt;
+}
+
 std::optional<int> AutofocusMapping::getMotorPosition(float depth) const {
     if (points_.empty()) return std::nullopt;
 

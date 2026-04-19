@@ -85,6 +85,17 @@ public:
     /** Get interpolated motor position for a given depth. */
     std::optional<int> getMotorPosition(float depth) const;
 
+    /**
+     * Inverse of getMotorPosition — interpolate what depth the lens is
+     * focused on when the motor sits at `motorPosition`. Used by the
+     * LiDAR waveform overlay in OPS view to draw a "motor-implied focus
+     * depth" reference line next to the live depth column.
+     *
+     * Returns nullopt if the mapping is empty; clamps to the endpoints
+     * outside the calibrated range (same policy as getMotorPosition).
+     */
+    std::optional<float> getDepthForMotor(int motorPosition) const;
+
     /** Validate the entire mapping. */
     ValidationResult validate() const;
 

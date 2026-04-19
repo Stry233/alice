@@ -15,12 +15,11 @@ Item {
 
         // Sub-tab bar — height dp(48), font dp(22), indicator dp(4)
         //
-        // A single indicator Rectangle slides between tab positions. We
-        // imperatively sync its x/width via `syncIndicator()` whenever any
-        // tab's geometry settles or the current tab changes — relying on
-        // binding-through-array reassignment was flaky on first launch
-        // because QML didn't always emit a change notification when the
-        // underlying JS array reference stayed the same.
+        // A single indicator Rectangle slides between tab positions. Its
+        // x/width are synced imperatively via `syncIndicator()` whenever a
+        // tab's geometry settles or the current tab changes; this avoids
+        // relying on QML change notifications for a JS array whose reference
+        // may not change even when its contents do.
         Rectangle {
             Layout.fillWidth: true
             height: Theme.dp(48)

@@ -243,6 +243,7 @@ qt_add_qml_module(alice_ui
         src/ui/qml/components/BadgePopover.qml
         src/ui/qml/components/SyncPopover.qml
         src/ui/qml/components/FaceOverlay.qml
+        src/ui/qml/components/LidarWaveform.qml
         src/ui/qml/SplashScreen.qml
         src/ui/qml/CfgView.qml
         src/ui/qml/components/CalibrationTable.qml

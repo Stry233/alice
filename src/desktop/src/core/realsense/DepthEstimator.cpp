@@ -6,7 +6,7 @@
 namespace alice {
 
 void DepthEstimator::reset() {
-    stateMm_ = 0.0f;
+    stateM_ = 0.0f;
     initialized_ = false;
     staleFrames_ = 0;
     lastTargetX_ = -1.0f;
@@ -23,15 +23,15 @@ void DepthEstimator::setSmoothing(float baseAlpha) {
     baseAlpha_ = std::clamp(baseAlpha, 0.02f, 1.0f);
 }
 
+void DepthEstimator::setDepthScale(float metersPerUnit) {
+    depthScale_ = std::clamp(metersPerUnit, 1e-5f, 1e-2f);
+}
+
 DepthEstimator::SampleResult DepthEstimator::sampleROI(
         const uint16_t *depthData, int width, int height,
         int cx, int cy) const {
-    // Collect valid pixels from a (2r+1)² window. Validity = in-range,
-    // non-zero. We do NOT require the center pixel to be valid — that
-    // was the central failure mode of the bilateral approach at far
-    // ranges where the center is commonly a sensor hole.
     constexpr int r = kRoiRadius;
-    constexpr int kCapacity = (2 * r + 1) * (2 * r + 1); // 49
+    constexpr int kCapacity = (2 * r + 1) * (2 * r + 1);
     uint16_t samples[kCapacity];
     int n = 0;
 
@@ -40,54 +40,45 @@ DepthEstimator::SampleResult DepthEstimator::sampleROI(
     const int y0 = std::max(0, cy - r);
     const int y1 = std::min(height - 1, cy + r);
 
-    const uint16_t minMm = static_cast<uint16_t>(minValidMm_);
-    const uint16_t maxMm = static_cast<uint16_t>(maxValidMm_);
+    // Convert mm thresholds to raw-unit thresholds. Ceil/floor keep the
+    // comparison strictly conservative against sub-unit rounding.
+    const float mmPerUnit = depthScale_ * 1000.0f;
+    const uint16_t minUnits = static_cast<uint16_t>(
+        std::clamp(std::ceil(minValidMm_ / mmPerUnit), 1.0f, 65535.0f));
+    const uint16_t maxUnits = static_cast<uint16_t>(
+        std::clamp(std::floor(maxValidMm_ / mmPerUnit), 1.0f, 65535.0f));
 
     for (int y = y0; y <= y1; ++y) {
         const uint16_t *row = depthData + y * width;
         for (int x = x0; x <= x1; ++x) {
             const uint16_t d = row[x];
-            if (d >= minMm && d <= maxMm) {
-                samples[n++] = d;
-            }
+            if (d >= minUnits && d <= maxUnits) samples[n++] = d;
         }
     }
 
     SampleResult result;
     if (n < kMinValidPixels) {
-        result.medianMm = 0.0f;
+        result.medianM = 0.0f;
         result.spatialConfidence = 0.0f;
         result.valid = false;
         return result;
     }
 
-    // Median and inter-quartile range via partial sort.
     std::sort(samples, samples + n);
-    const float median = static_cast<float>(samples[n / 2]);
-    const float q25 = static_cast<float>(samples[n / 4]);
-    const float q75 = static_cast<float>(samples[(3 * n) / 4]);
+    const uint16_t medianUnits = samples[n / 2];
+    const uint16_t q25Units    = samples[n / 4];
+    const uint16_t q75Units    = samples[(3 * n) / 4];
 
-    // Spatial confidence combines two independent signals:
-    //
-    //   validity  = min(validRatio * 2, 1). Saturates at 50 % valid pixels.
-    //               Above that, the median is already statistically robust
-    //               (~25 samples). More valid pixels don't improve the
-    //               median's reliability — they only tighten variance, and
-    //               that's what tightness measures. The previous linear
-    //               0-100% scale unfairly penalized 4 m+ readings where
-    //               40 % valid is a GOOD result.
-    //
-    //   tightness = 1 - IQR/median, clamped. Measures how tightly the
-    //               valid pixels cluster around the median. High IQR (ROI
-    //               straddles a depth edge) → low trust. A tight cluster
-    //               at low validRatio is still a trustworthy measurement.
-    const float validRatio = static_cast<float>(n) / static_cast<float>(kCapacity);
+    // Spatial confidence = validity (saturates at 50 % valid pixels)
+    //                    × tightness (1 - IQR/median × 4, clamped).
+    const float validRatio = static_cast<float>(n) / kCapacity;
     const float validity = std::min(validRatio * 2.0f, 1.0f);
-    const float iqr = q75 - q25;
-    const float normalizedIqr = (median > 1.0f) ? (iqr / median) : 1.0f;
+    const float normalizedIqr = (medianUnits > 1)
+        ? static_cast<float>(q75Units - q25Units) / medianUnits
+        : 1.0f;
     const float tightness = std::clamp(1.0f - normalizedIqr * 4.0f, 0.0f, 1.0f);
 
-    result.medianMm = median;
+    result.medianM = medianUnits * depthScale_;
     result.spatialConfidence = validity * tightness;
     result.valid = true;
     return result;
@@ -98,11 +89,6 @@ DepthEstimator::Reading DepthEstimator::process(
         float targetNormX, float targetNormY) {
     Reading out;
 
-    // ── 1. Detect measurement-position changes ────────────────────────
-    // The temporal state is spatially anchored: it represents the depth
-    // AT the last target point. When the target moves to a new location,
-    // the state is meaningless and must be discarded — otherwise the
-    // filter fights the new reading with stale context.
     if (lastTargetX_ >= 0.0f) {
         const float dx = targetNormX - lastTargetX_;
         const float dy = targetNormY - lastTargetY_;
@@ -114,7 +100,6 @@ DepthEstimator::Reading DepthEstimator::process(
     lastTargetX_ = targetNormX;
     lastTargetY_ = targetNormY;
 
-    // ── 2. Spatial sampling ────────────────────────────────────────────
     const int centerX = std::clamp(
         static_cast<int>(targetNormX * width), 0, width - 1);
     const int centerY = std::clamp(
@@ -124,77 +109,57 @@ DepthEstimator::Reading DepthEstimator::process(
                                           centerX, centerY);
 
     if (!sample.valid) {
-        // Not enough valid pixels. Hold the last state if we have one,
-        // but mark the reading as stale so the UI can reflect that.
         ++staleFrames_;
         if (initialized_ && staleFrames_ < kMaxStaleFrames) {
-            out.valueM = stateMm_ / 1000.0f;
+            out.valueM = stateM_;
             out.confidence = temporalConf_ *
-                std::max(0.0f, 1.0f - static_cast<float>(staleFrames_)
-                                       / kMaxStaleFrames);
+                std::max(0.0f, 1.0f - static_cast<float>(staleFrames_) / kMaxStaleFrames);
             out.staleFrames = staleFrames_;
-            out.isValid = false; // stale — caller shouldn't re-emit
+            out.isValid = false;
         }
         return out;
     }
-
     staleFrames_ = 0;
 
-    // ── 3. Temporal filtering ─────────────────────────────────────────
-    const float measurementMm = sample.medianMm;
+    const float measurementM = sample.medianM;
     const float spatialConf = sample.spatialConfidence;
 
     if (!initialized_) {
-        // Fresh start: the first valid reading IS the state. Temporal
-        // confidence starts at 0 — one sample is not enough to trust;
-        // the output confidence falls back to spatial for this frame.
-        stateMm_ = measurementMm;
+        stateM_ = measurementM;
         temporalConf_ = 0.0f;
         initialized_ = true;
     } else {
-        // Discontinuity check. Depth can change abruptly for legitimate
-        // reasons: object leaves frame, hand enters frame, scene cut.
-        // We snap to the new value when the measurement is statistically
-        // unlikely to be noise.
-        //
-        // The bar uses the product relDelta × spatialConfidence. Larger
-        // deltas require less confidence (a 400 % change with 30 %
-        // confidence is obviously real; a 30 % change with 30 %
-        // confidence could be noise). The constant 0.15 is tuned so:
-        //   delta   conf needed
-        //   0.25    0.60   (boundary: small change needs high conviction)
-        //   0.50    0.30
-        //   1.00    0.15
-        //   3.00    0.05   (huge change: almost any valid reading counts)
-        const float relDelta = std::abs(measurementMm - stateMm_)
-                             / std::max(stateMm_, 1.0f);
+        const float relDelta = std::abs(measurementM - stateM_)
+                             / std::max(stateM_, 1e-6f);
         const bool discontinuity =
             relDelta > kDiscontinuityDelta &&
             relDelta * spatialConf > kDiscontinuityEvidence;
 
         if (discontinuity) {
-            // Hard reset — new scene, new state, temporal trust restarts.
-            stateMm_ = measurementMm;
+            stateM_ = measurementM;
             temporalConf_ = 0.0f;
         } else {
-            // Normal tracking: confidence-weighted EMA on state, and a
-            // separate growth on temporal confidence. Each stable update
-            // adds kTemporalConfGrowth (~0.15) → saturates near 1.0 in
-            // ~7 frames, mirroring the old Kalman's P-decay curve.
-            const float alpha = std::clamp(baseAlpha_ * spatialConf, 0.0f, 1.0f);
-            stateMm_ = alpha * measurementMm + (1.0f - alpha) * stateMm_;
+            // Adaptive alpha: quiet scenes (relDelta ≤ 5 %) get heavy
+            // smoothing; mid-range transitions (5 %–25 %) ramp up to 1.0
+            // so the EMA doesn't lag sub-discontinuity steps.
+            constexpr float kQuietRelDelta = 0.05f;
+            const float effectiveAlpha = [&]() {
+                const float alphaQuiet = baseAlpha_ * spatialConf;
+                if (relDelta <= kQuietRelDelta) return alphaQuiet;
+                const float t = std::clamp(
+                    (relDelta - kQuietRelDelta) /
+                        (kDiscontinuityDelta - kQuietRelDelta),
+                    0.0f, 1.0f);
+                return std::clamp(alphaQuiet + t * (1.0f - alphaQuiet),
+                                  0.02f, 1.0f);
+            }();
+            stateM_ = effectiveAlpha * measurementM
+                    + (1.0f - effectiveAlpha) * stateM_;
             temporalConf_ = std::min(1.0f, temporalConf_ + kTemporalConfGrowth);
         }
     }
 
-    // ── 4. Output ──────────────────────────────────────────────────────
-    // Report max(spatial, temporal): once tracking has settled, temporal
-    // dominates (≈ 1.0) and transient ROI-quality dips don't falsely
-    // signal "bad reading" to downstream consumers (autofocus gates on
-    // this value). On a fresh init or right after a discontinuity snap,
-    // temporal is 0 and spatial carries the signal until the filter
-    // proves itself over the next few frames.
-    out.valueM = stateMm_ / 1000.0f;
+    out.valueM = stateM_;
     out.confidence = std::clamp(std::max(spatialConf, temporalConf_), 0.0f, 1.0f);
     out.isValid = true;
     out.staleFrames = 0;

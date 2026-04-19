@@ -153,6 +153,149 @@ TEST(DepthEstimator, SlowDragAcrossTwoDepthRegionsSnapsIndependently) {
         << " m after crosshair moved 60 % of the frame";
 }
 
+// ── Drag-across-gradient diagnostics ─────────────────────────────────
+//
+// SlowDragAcrossTwoDepthRegionsSnapsIndependently above uses a 500→4000 mm
+// step that trips the discontinuity gate. Real scenes rarely have such
+// clean 8× steps — these tests exercise the sub-discontinuity path
+// where the adaptive EMA has to carry the estimator across the step.
+
+TEST(DepthEstimator, DragAcrossMildDepthGradientBlendsStaleContext) {
+    // Left 1000 mm → right 1200 mm (20 % step, below the 25 %
+    // discontinuity threshold). Sub-threshold position deltas too, so
+    // the reading must settle via the EMA alone.
+    DepthEstimator est;
+    const int W = 640, H = 480;
+    std::vector<uint16_t> frame(W * H, 0);
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            frame[y * W + x] = (x < 320) ? 1000 : 1200;
+        }
+    }
+
+    for (int i = 0; i < 30; ++i) {
+        est.process(frame.data(), W, H, 0.2f, 0.5f);
+    }
+
+    DepthEstimator::Reading last;
+    for (int i = 1; i <= 60; ++i) {
+        last = est.process(frame.data(), W, H, 0.2f + i * 0.01f, 0.5f);
+    }
+
+    EXPECT_NEAR(last.valueM, 1.2f, 0.01f)
+        << "Slow drag across a sub-discontinuity step should settle at "
+        << "the new region. Got " << last.valueM;
+}
+
+TEST(DepthEstimator, ResetPlusStalePositionProcessLeaksToNextFrame) {
+    // Models the UI/capture race: capture had already read the OLD
+    // mx/my before the UI wrote the new ones, so the first process()
+    // after reset() runs at the STALE position and re-initialises
+    // stateM_ there. The next frame then has to recover via EMA.
+    DepthEstimator est;
+    const int W = 640, H = 480;
+    std::vector<uint16_t> leftFrame(W * H, 0);
+    std::vector<uint16_t> rightFrame(W * H, 0);
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            leftFrame[y * W + x] = (x < 320) ? 1000 : 1200;
+            rightFrame[y * W + x] = (x < 320) ? 1000 : 1200;
+        }
+    }
+
+    for (int i = 0; i < 30; ++i) {
+        est.process(leftFrame.data(), W, H, 0.20f, 0.5f);
+    }
+    auto before = est.process(leftFrame.data(), W, H, 0.20f, 0.5f);
+    EXPECT_NEAR(before.valueM, 1.0f, 0.01f);
+
+    est.reset();
+    est.process(leftFrame.data(), W, H, 0.20f, 0.5f);  // stale-position race
+    auto last = est.process(rightFrame.data(), W, H, 0.21f, 0.5f);
+
+    // Documents that state IS re-installed at the stale location — the
+    // single post-race frame doesn't recover on its own. See
+    // DragAcrossMildDepthGradientBlendsStaleContext for the full-drag case.
+    EXPECT_NEAR(last.valueM, 1.0f, 0.01f)
+        << "Post-race stateM should reflect the stale position. Got "
+        << last.valueM;
+}
+
+TEST(DepthEstimator, ResetAtNewPositionDirectlyYieldsNewDepth) {
+    // Happy path: reset followed by process at the NEW position — first
+    // reading is the new depth, zero blending.
+    DepthEstimator est;
+    const int W = 640, H = 480;
+    std::vector<uint16_t> frame(W * H, 0);
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            frame[y * W + x] = (x < 320) ? 1000 : 1200;
+        }
+    }
+
+    for (int i = 0; i < 30; ++i) {
+        est.process(frame.data(), W, H, 0.20f, 0.5f);
+    }
+    est.reset();
+    auto r = est.process(frame.data(), W, H, 0.60f, 0.5f);
+    EXPECT_NEAR(r.valueM, 1.2f, 0.01f);
+}
+
+TEST(DepthEstimator, DragAtQuarterPerFrameAcrossGradientStaysStuck) {
+    // Continuous drag at 0.25 %/frame over ~8 s through a smooth depth
+    // gradient. No single frame sees a discontinuity — everything goes
+    // through alpha-weighted EMA.
+    DepthEstimator est;
+    const int W = 640, H = 480;
+    std::vector<uint16_t> frame(W * H, 0);
+    // Linear gradient: x=0 → 800 mm, x=W-1 → 1800 mm.
+    for (int y = 0; y < H; ++y) {
+        for (int x = 0; x < W; ++x) {
+            frame[y * W + x] = static_cast<uint16_t>(
+                800 + (1000 * x) / (W - 1));
+        }
+    }
+
+    for (int i = 0; i < 30; ++i) {
+        est.process(frame.data(), W, H, 0.05f, 0.5f);
+    }
+
+    DepthEstimator::Reading last;
+    // 0.05 → 0.95 over 360 frames, 0.0025 / frame. Deep below the 2 %
+    // position-reset threshold.
+    for (int i = 1; i <= 360; ++i) {
+        last = est.process(frame.data(), W, H, 0.05f + i * 0.0025f, 0.5f);
+    }
+    // Expected depth at x=0.95 of the gradient: 800 + 1000*0.95 = 1750 mm.
+    EXPECT_NEAR(last.valueM, 1.75f, 0.05f)
+        << "After a 360-frame smooth drag across the whole gradient, the "
+        << "reading must track the new position. Got " << last.valueM;
+}
+
+TEST(DepthEstimator, SparseFarROIBecomesValidAtLowerValidPixelThreshold) {
+    // Regression guard: at 4-5 m the D4xx often yields only 4-6 valid
+    // pixels per 7×7 ROI. A stricter kMinValidPixels would mark the
+    // frame invalid and freeze the UI at the pre-drag depth.
+    DepthEstimator est;
+    std::vector<uint16_t> sparseFar(640 * 480, 0);
+    const int cx = 320, cy = 240;
+    int filled = 0;
+    for (int dy = -3; dy <= 3 && filled < 6; ++dy) {
+        for (int dx = -3; dx <= 3 && filled < 6; ++dx) {
+            sparseFar[(cy + dy) * 640 + (cx + dx)] = 4750;
+            ++filled;
+        }
+    }
+    auto r = est.process(sparseFar.data(), 640, 480, 0.5f, 0.5f);
+    EXPECT_TRUE(r.isValid)
+        << "6 valid pixels at 4.75 m must produce a valid (low-confidence) "
+        << "reading — lose this and the UI freezes at the previous depth "
+        << "on any drag to a sparse far ROI.";
+    EXPECT_NEAR(r.valueM, 4.75f, 0.02f);
+    EXPECT_LT(r.confidence, 0.5f)
+        << "Sparse ROI should report honestly low confidence.";
+}
+
 TEST(DepthEstimator, PositionChangeResetsState) {
     // This is the PRIMARY bug the new estimator fixes: when the target
     // moves to a new spatial location, the temporal state must be

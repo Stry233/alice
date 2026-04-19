@@ -205,9 +205,12 @@ cython_debug/
 .pypirc
 
 
-# Packaging build artifacts — the scripts / templates in
-# src/desktop/release/ ARE version-controlled; only the generated
-# installers and staging dirs are excluded.
+# Desktop packaging — scripts, templates, and build artifacts are local-only.
+src/desktop/release/
+
+# Internal design / planning scratch — local-only.
+doc/
+docs/superpowers/
 *.AppImage
 *.tar.gz
 *.deb

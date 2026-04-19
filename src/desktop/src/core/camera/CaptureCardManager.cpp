@@ -19,20 +19,56 @@ CaptureCardManager::~CaptureCardManager() {
     stop();
 }
 
-QStringList CaptureCardManager::availableDevices() const {
-    QStringList names;
+// Filter: anything that's not a RealSense RGB stream is a candidate
+// capture-card input. RealSense RGB is handled by RealSenseManager; if
+// it appeared in this list the user could accidentally select it and
+// starve the depth pipeline.
+static bool isCandidateCaptureDevice(const QCameraDevice &dev) {
+    const QString desc = dev.description().toLower();
+    return !desc.contains("realsense") && !desc.contains("intel(r) rs");
+}
+
+QVariantList CaptureCardManager::availableDevices() const {
+    QVariantList out;
     for (const auto &dev : QMediaDevices::videoInputs()) {
-        names.append(dev.description());
+        if (!isCandidateCaptureDevice(dev)) continue;
+        QVariantMap m;
+        // QCameraDevice::id() is the platform-stable handle (V4L2 path
+        // on Linux, DeviceInstance path on Windows) — survives replug
+        // on the same host, safe to persist as the user's preference.
+        m["id"]     = QString::fromUtf8(dev.id());
+        m["name"]   = dev.description();
+        m["active"] = connected_ && QString::fromUtf8(dev.id()) == activeDeviceId_;
+        out.append(m);
     }
-    return names;
+    return out;
+}
+
+void CaptureCardManager::selectDevice(const QString &id) {
+    if (preferredDeviceId_ == id) return;
+    preferredDeviceId_ = id;
+
+    // Switch immediately if we're not already on the preferred input.
+    // Empty id clears the preference (revert to auto-pick).
+    if (!id.isEmpty() && activeDeviceId_ != id) {
+        stop();
+        start();
+    }
+    emit availableDevicesChanged();
 }
 
 QCameraDevice CaptureCardManager::findCaptureCard() const {
+    // 1. Honour the user's preferred id if the device is present.
+    if (!preferredDeviceId_.isEmpty()) {
+        for (const auto &dev : QMediaDevices::videoInputs()) {
+            if (QString::fromUtf8(dev.id()) == preferredDeviceId_) {
+                return dev;
+            }
+        }
+    }
+    // 2. First non-RealSense input wins.
     for (const auto &dev : QMediaDevices::videoInputs()) {
-        QString desc = dev.description().toLower();
-        if (desc.contains("realsense") || desc.contains("intel(r) rs"))
-            continue;
-        return dev;
+        if (isCandidateCaptureDevice(dev)) return dev;
     }
     return {};
 }
@@ -88,6 +124,7 @@ void CaptureCardManager::startDevice(const QString &deviceName) {
     }
 
     deviceDescription_ = target.description();
+    activeDeviceId_ = QString::fromUtf8(target.id());
     loggedFrameInfo_ = false;
 
     camera_ = std::make_unique<QCamera>(target);
@@ -116,6 +153,7 @@ void CaptureCardManager::startDevice(const QString &deviceName) {
             lastFrameTime_.start();
             frameTimeoutTimer_.start();
             emit connectionChanged(true);
+            emit availableDevicesChanged();
         } else if (!active && connected_) {
             disconnectDevice();
         }
@@ -150,7 +188,9 @@ void CaptureCardManager::stop() {
         connected_ = false;
         lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
         connectedSinceMs_ = 0;
+        activeDeviceId_.clear();
         emit connectionChanged(false);
+        emit availableDevicesChanged();
     }
 }
 
@@ -164,8 +204,10 @@ void CaptureCardManager::disconnectDevice() {
     connected_ = false;
     lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
     connectedSinceMs_ = 0;
+    activeDeviceId_.clear();
     frameTimeoutTimer_.stop();
     emit connectionChanged(false);
+    emit availableDevicesChanged();
 
     // Defer heavy cleanup so we don't destroy objects mid-signal
     QTimer::singleShot(0, this, [this]() {

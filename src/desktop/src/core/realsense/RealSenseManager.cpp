@@ -59,19 +59,28 @@ void RealSenseManager::setMeasurementPosition(float x, float y) {
         measureX_ = cx;
         measureY_ = cy;
     }
-    // Publish to the lock-free cache used by the UI thread.
+    measureXCached_.store(cx, std::memory_order_relaxed);
+    measureYCached_.store(cy, std::memory_order_relaxed);
+    // Sub-2% moves don't trip the estimator's auto-reset, so a slow
+    // drag would otherwise EMA-blend old-position depth into the new.
+    QMutexLocker lock(&estimatorParamsMutex_);
+    estimator_.reset();
+}
+
+void RealSenseManager::setTrackedPosition(float x, float y) {
+    const float cx = std::clamp(x, 0.0f, 1.0f);
+    const float cy = std::clamp(y, 0.0f, 1.0f);
+    {
+        QMutexLocker lock(&positionMutex_);
+        measureX_ = cx;
+        measureY_ = cy;
+    }
     measureXCached_.store(cx, std::memory_order_relaxed);
     measureYCached_.store(cy, std::memory_order_relaxed);
 }
 
 void RealSenseManager::jumpToPosition(float x, float y) {
     setMeasurementPosition(x, y);
-    // Clear the estimator state so the capture thread's very next frame
-    // samples the new target without any EMA blending against the old
-    // position's depth. Serialised on the same mutex that capture uses
-    // around estimator_.process() so we never race a reset with a frame.
-    QMutexLocker lock(&estimatorParamsMutex_);
-    estimator_.reset();
 }
 
 void RealSenseManager::getMeasurementPosition(float &x, float &y) const {
@@ -117,8 +126,59 @@ void RealSenseManager::stop() {
     if (connected_.exchange(false)) {
         lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
         connectedSinceMs_ = 0;
+        {
+            QMutexLocker lock(&deviceInfoMutex_);
+            activeSerial_.clear();
+        }
         emit connectionChanged(false);
+        emit availableDevicesChanged();
     }
+}
+
+QVariantList RealSenseManager::availableDevices() const {
+    QVariantList out;
+    QString activeCopy;
+    {
+        QMutexLocker lock(&deviceInfoMutex_);
+        activeCopy = activeSerial_;
+    }
+    try {
+        rs2::context ctx;
+        auto devs = ctx.query_devices();
+        for (uint32_t i = 0; i < devs.size(); ++i) {
+            const auto &d = devs[i];
+            if (!d.supports(RS2_CAMERA_INFO_SERIAL_NUMBER)) continue;
+            const QString serial = QString::fromUtf8(d.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+            QString name = "Intel RealSense";
+            if (d.supports(RS2_CAMERA_INFO_NAME))
+                name = QString::fromUtf8(d.get_info(RS2_CAMERA_INFO_NAME));
+            QVariantMap m;
+            m["id"]     = serial;
+            m["name"]   = QString("%1 (%2)").arg(name, serial);
+            m["active"] = connected_.load() && serial == activeCopy;
+            out.append(m);
+        }
+    } catch (...) {
+        // librealsense throws on context init for missing udev permissions
+        // or detached USB. Return whatever we've enumerated so far —
+        // typically an empty list, which the UI renders as "no selector
+        // shown" rather than a broken dropdown.
+    }
+    return out;
+}
+
+void RealSenseManager::selectDevice(const QString &serial) {
+    if (preferredSerial_ == serial) return;
+    preferredSerial_ = serial;
+
+    // Restart the pipeline so the new enable_device binding takes effect.
+    // Only restart if we'd actually switch — empty serial on an unconnected
+    // manager is a no-op.
+    if (!serial.isEmpty() && activeSerial_ != serial && running_) {
+        stop();
+        start();
+    }
+    emit availableDevicesChanged();
 }
 
 QVariantList RealSenseManager::availableDepthModes() const {
@@ -210,8 +270,64 @@ void RealSenseManager::setStreamConfig(int dw, int dh, int df, int cw, int ch, i
     }
 }
 
+// MEDIUM_DENSITY balances match density vs. accuracy — HIGH_ACCURACY
+// starves the matcher of pixels past ~4 m; HIGH_DENSITY fabricates
+// questionable matches that throw autofocus. The downstream pipeline
+// (ROI median + confidence-weighted EMA) absorbs the mild extra noise.
+static void applyDensityPreset(rs2::device &dev) {
+    try {
+        for (auto &sensor : dev.query_sensors()) {
+            if (!sensor.is<rs2::depth_sensor>()) continue;
+            auto ds = sensor.as<rs2::depth_sensor>();
+            if (!ds.supports(RS2_OPTION_VISUAL_PRESET)) continue;
+            ds.set_option(RS2_OPTION_VISUAL_PRESET,
+                          RS2_RS400_VISUAL_PRESET_MEDIUM_DENSITY);
+        }
+    } catch (...) {}
+}
+
+// Try to set DEPTH_UNITS to 0.1 mm per Z16 unit. Trades max encodable
+// depth (~6.55 m at 0.1 mm vs 65.5 m at 1 mm — fine for Alice's range)
+// for sub-mm precision. Returns the scale the sensor actually reports
+// so the estimator can trust it regardless of whether set_option took.
+static float applySubMillimetrePrecision(rs2::device &dev) {
+    float resultScale = 0.001f;
+    try {
+        for (auto &sensor : dev.query_sensors()) {
+            if (!sensor.is<rs2::depth_sensor>()) continue;
+            auto ds = sensor.as<rs2::depth_sensor>();
+            if (ds.supports(RS2_OPTION_DEPTH_UNITS)) {
+                try { ds.set_option(RS2_OPTION_DEPTH_UNITS, 0.0001f); }
+                catch (...) {}
+            }
+            resultScale = ds.get_depth_scale();
+        }
+    } catch (...) {}
+    return resultScale;
+}
+
 void RealSenseManager::captureLoop() {
     try {
+        // Bind to preferred serial when present. Auto-pick fallback if
+        // the preferred camera is unplugged so the app still comes up.
+        if (!preferredSerial_.isEmpty()) {
+            try {
+                rs2::context ctx;
+                auto devs = ctx.query_devices();
+                for (uint32_t i = 0; i < devs.size(); ++i) {
+                    const auto &d = devs[i];
+                    if (d.supports(RS2_CAMERA_INFO_SERIAL_NUMBER)) {
+                        const QString s = QString::fromUtf8(
+                            d.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+                        if (s == preferredSerial_) {
+                            impl_->config.enable_device(preferredSerial_.toStdString());
+                            break;
+                        }
+                    }
+                }
+            } catch (...) {}
+        }
+
         impl_->config.enable_stream(RS2_STREAM_DEPTH, depthWidth_, depthHeight_, RS2_FORMAT_Z16, depthFps_);
 
         try {
@@ -224,9 +340,19 @@ void RealSenseManager::captureLoop() {
         connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
         lastInitFailed_ = false;
 
-        // Read device identity off the active pipeline so the UI popover can
-        // display the actual model. Safe to fail — the getters fall back to
-        // whatever was last cached.
+        // Sensor options have to be applied after pipeline.start() —
+        // the device isn't live until then.
+        try {
+            auto dev0 = profile.get_device();
+            applyDensityPreset(dev0);
+            const float scale = applySubMillimetrePrecision(dev0);
+            depthScaleM_.store(scale, std::memory_order_relaxed);
+            {
+                QMutexLocker lock(&estimatorParamsMutex_);
+                estimator_.setDepthScale(scale);
+            }
+        } catch (...) {}
+
         try {
             auto dev = profile.get_device();
             QString name;
@@ -236,12 +362,19 @@ void RealSenseManager::captureLoop() {
             if (dev.supports(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR))
                 bus = QString("USB %1").arg(QString::fromUtf8(
                     dev.get_info(RS2_CAMERA_INFO_USB_TYPE_DESCRIPTOR)));
-            QMutexLocker lock(&deviceInfoMutex_);
-            if (!name.isEmpty()) deviceName_ = name;
-            if (!bus.isEmpty()) deviceBus_ = bus;
+            QString serial;
+            if (dev.supports(RS2_CAMERA_INFO_SERIAL_NUMBER))
+                serial = QString::fromUtf8(dev.get_info(RS2_CAMERA_INFO_SERIAL_NUMBER));
+            {
+                QMutexLocker lock(&deviceInfoMutex_);
+                if (!name.isEmpty()) deviceName_ = name;
+                if (!bus.isEmpty()) deviceBus_ = bus;
+                activeSerial_ = serial;
+            }
         } catch (...) {}
 
         emit connectionChanged(true);
+        emit availableDevicesChanged();
 
     } catch (const rs2::error &e) {
         // Only emit the error the first time init fails (avoid log spam
@@ -257,6 +390,28 @@ void RealSenseManager::captureLoop() {
     // Align depth to color so crosshair on RGB maps to correct depth pixel
     rs2::align alignToColor(RS2_STREAM_COLOR);
 
+    // librealsense post-processing chain. Filters run in disparity
+    // space (noise is uniform there, not in metric depth), hence the
+    // depth→disparity → filter → disparity→depth sandwich.
+    //
+    // Temporal alpha = 1.0 disables per-pixel IIR smoothing: IIR mixes
+    // prior frames into every pixel and makes scene transitions ramp
+    // over 3-5 frames, defeating the discontinuity gate downstream.
+    // HOLES_FILL stays enabled — that uses per-pixel history only
+    // where the current frame has no reading.
+    rs2::disparity_transform depth_to_disparity(true);
+    rs2::disparity_transform disparity_to_depth(false);
+    rs2::spatial_filter spatial;
+    rs2::temporal_filter temporal;
+    try {
+        spatial.set_option(RS2_OPTION_FILTER_MAGNITUDE, 2);
+        spatial.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 0.25f);
+        spatial.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
+        temporal.set_option(RS2_OPTION_FILTER_SMOOTH_ALPHA, 1.0f);
+        temporal.set_option(RS2_OPTION_FILTER_SMOOTH_DELTA, 20);
+        temporal.set_option(RS2_OPTION_HOLES_FILL, 3);
+    } catch (...) {}
+
     // Frame throttling: skip frames if processing can't keep up
     int frameCount = 0;
 
@@ -270,18 +425,24 @@ void RealSenseManager::captureLoop() {
             lastFrameTimeMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
 
-            // Align depth to color (expensive — do every frame for accuracy)
+            // Align before filtering so we filter once on the frame
+            // we're about to sample, not on unused colour data.
             try { frames = alignToColor.process(frames); } catch (...) {}
 
             auto depthFrame = frames.get_depth_frame();
             if (depthFrame) {
+                try {
+                    rs2::frame f = depthFrame;
+                    f = depth_to_disparity.process(f);
+                    f = spatial.process(f);
+                    f = temporal.process(f);
+                    f = disparity_to_depth.process(f);
+                    depthFrame = f.as<rs2::depth_frame>();
+                } catch (...) {}
                 int w = depthFrame.get_width();
                 int h = depthFrame.get_height();
                 auto data = reinterpret_cast<const uint16_t *>(depthFrame.get_data());
 
-                // Depth estimation: ROI median + confidence-weighted EMA.
-                // Runs every frame (cheap, ~49 pixels sorted) — autofocus
-                // needs the freshest possible reading.
                 float mx, my;
                 {
                     QMutexLocker lock(&positionMutex_);
@@ -290,9 +451,6 @@ void RealSenseManager::captureLoop() {
                 }
                 DepthEstimator::Reading reading;
                 {
-                    // Serialize with parameter setters on the UI thread.
-                    // The critical section is ~50 μs (ROI sort dominates),
-                    // so slider drags never observe noticeable latency.
                     QMutexLocker lock(&estimatorParamsMutex_);
                     reading = estimator_.process(data, w, h, mx, my);
                 }
@@ -300,12 +458,19 @@ void RealSenseManager::captureLoop() {
                     depth_ = reading.valueM;
                     confidence_ = reading.confidence;
                     emit depthChanged(reading.valueM, reading.confidence);
+                    invalidStreak_ = 0;
+                } else {
+                    // After ~0.25 s of no usable reading, blank the UI
+                    // so it can't keep painting the pre-drag depth.
+                    if (++invalidStreak_ == kInvalidClearFrames) {
+                        depth_ = 0.0f;
+                        confidence_ = 0.0f;
+                        emit depthChanged(0.0f, 0.0f);
+                    }
                 }
 
-                // Cache the aligned depth frame for on-demand point sampling
-                // (face tracker's per-face depth, eye-level depth, etc.).
-                // This is a memcpy of ~600 KiB per frame — ~0.3 ms on modern
-                // CPUs, well within the capture budget.
+                // Cache for off-crosshair sampling (face tracker, etc.).
+                // ~600 KiB memcpy, ~0.3 ms — within frame budget.
                 {
                     QMutexLocker lock(&depthCacheMutex_);
                     const size_t sz = static_cast<size_t>(w) * h;
@@ -315,15 +480,8 @@ void RealSenseManager::captureLoop() {
                     depthCacheH_ = h;
                 }
 
-                // Depth colormap: only generate every Nth frame (expensive,
-                // visual only) AND only when at least one consumer is
-                // subscribed — the OPS view doesn't bind alice.depthFrame at
-                // all, so the colormap is wasted CPU unless CFG view is open
-                // or the sync stream is enabled.
-                //
-                // kColormapDownsample = 3 gives ~10 fps colormap at a 30 fps
-                // capture, which is plenty for a diagnostic overlay but
-                // saves ~20 colorizeDepth() calls per second.
+                // Downsample to ~10 fps — the colormap is a diagnostic
+                // preview, not a real-time feed.
                 static constexpr int kColormapDownsample = 3;
                 if (colormapEnabled_ && frameCount % kColormapDownsample == 0) {
                     QImage depthImage = colorizeDepth(data, w, h);
@@ -390,11 +548,17 @@ float RealSenseManager::depthAt(float nx, float ny) const {
     QMutexLocker lock(&depthCacheMutex_);
     if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) return 0.0f;
 
+    const float scale = depthScaleM_.load(std::memory_order_relaxed);
+    const float mmPerUnit = scale * 1000.0f;
+    const uint16_t minUnits = static_cast<uint16_t>(
+        std::clamp(std::ceil(minValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
+    const uint16_t maxUnits = static_cast<uint16_t>(
+        std::clamp(std::floor(maxValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
+
     const int cx = std::clamp(static_cast<int>(nx * depthCacheW_), 0, depthCacheW_ - 1);
     const int cy = std::clamp(static_cast<int>(ny * depthCacheH_), 0, depthCacheH_ - 1);
 
-    // 5×5 neighbourhood — take the median of valid mm readings to survive
-    // one or two hole pixels without pulling the estimate off the subject.
+    // 5×5 median to survive one or two hole pixels.
     constexpr int kRadius = 2;
     const int x0 = std::max(0, cx - kRadius);
     const int y0 = std::max(0, cy - kRadius);
@@ -407,50 +571,122 @@ float RealSenseManager::depthAt(float nx, float ny) const {
         const uint16_t *row = depthCache_.data() + yy * depthCacheW_;
         for (int xx = x0; xx <= x1; ++xx) {
             const uint16_t d = row[xx];
-            if (d >= minValidDepth_ && d <= maxValidDepth_) {
+            if (d >= minUnits && d <= maxUnits) {
                 samples[n++] = d;
             }
         }
     }
     if (n == 0) return 0.0f;
 
-    // Insertion sort — n ≤ 25, branchless-ish.
     for (int i = 1; i < n; ++i) {
         uint16_t v = samples[i];
         int j = i - 1;
         while (j >= 0 && samples[j] > v) { samples[j + 1] = samples[j]; --j; }
         samples[j + 1] = v;
     }
-    const uint16_t median = samples[n / 2];
-    return static_cast<float>(median) / 1000.0f; // mm → m
+    return samples[n / 2] * scale;
+}
+
+QVariantList RealSenseManager::depthHorizontalSlice(float ny, int samples) const {
+    QVariantList out;
+    if (samples <= 0) return out;
+    out.reserve(samples);
+
+    QMutexLocker lock(&depthCacheMutex_);
+    if (depthCache_.empty() || depthCacheW_ <= 0 || depthCacheH_ <= 0) {
+        // Keep the slot count stable so the QML layout doesn't collapse
+        // on a transient camera glitch.
+        for (int i = 0; i < samples; ++i) out.append(0.0f);
+        return out;
+    }
+
+    const float scale = depthScaleM_.load(std::memory_order_relaxed);
+    const float mmPerUnit = scale * 1000.0f;
+    const uint16_t minUnits = static_cast<uint16_t>(
+        std::clamp(std::ceil(minValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
+    const uint16_t maxUnits = static_cast<uint16_t>(
+        std::clamp(std::floor(maxValidDepth_ / mmPerUnit), 1.0f, 65535.0f));
+
+    const int baseY = std::clamp(static_cast<int>(ny * depthCacheH_), 0,
+                                 depthCacheH_ - 1);
+
+    // Probe three vertical rows per X so a lateral structure (person
+    // left-of-frame, wall behind) produces a visible vertical spread
+    // in the top-view plot instead of collapsing to a single flat line.
+    // Returns 3 * samples depths, consecutive triplets sharing an X.
+    const int rowOffset = std::max(2, depthCacheH_ / 32);
+    const int rowYs[3] = {
+        std::clamp(baseY - rowOffset, 0, depthCacheH_ - 1),
+        baseY,
+        std::clamp(baseY + rowOffset, 0, depthCacheH_ - 1),
+    };
+
+    for (int i = 0; i < samples; ++i) {
+        const int cx = static_cast<int>(
+            (static_cast<float>(i) / (samples - 1 > 0 ? samples - 1 : 1))
+            * (depthCacheW_ - 1));
+
+      for (int rowIdx = 0; rowIdx < 3; ++rowIdx) {
+        const int cy = rowYs[rowIdx];
+
+        uint16_t neighbours[9];
+        int n = 0;
+        for (int dy = -1; dy <= 1; ++dy) {
+            const int y = cy + dy;
+            if (y < 0 || y >= depthCacheH_) continue;
+            for (int dx = -1; dx <= 1; ++dx) {
+                const int x = cx + dx;
+                if (x < 0 || x >= depthCacheW_) continue;
+                const uint16_t d = depthCache_[y * depthCacheW_ + x];
+                if (d >= minUnits && d <= maxUnits) {
+                    neighbours[n++] = d;
+                }
+            }
+        }
+
+        if (n == 0) {
+            out.append(0.0f);
+            continue;
+        }
+        for (int k = 1; k < n; ++k) {
+            uint16_t v = neighbours[k];
+            int j = k - 1;
+            while (j >= 0 && neighbours[j] > v) { neighbours[j + 1] = neighbours[j]; --j; }
+            neighbours[j + 1] = v;
+        }
+        out.append(neighbours[n / 2] * scale);
+      }
+    }
+    return out;
 }
 
 QImage RealSenseManager::colorizeDepth(const uint16_t *depthData, int width, int height) {
-    // Pre-built LUT: depth value (0..65535 mm) → RGB triple. Constructed
-    // lazily on first call and reused for the process lifetime. 192 KiB fits
-    // comfortably in L2, eliminates per-pixel float math and the `d == 0`
-    // branch, and warms the cache after the first few rows.
-    static const std::array<std::array<uint8_t, 3>, 65536> kDepthLut = [] {
-        std::array<std::array<uint8_t, 3>, 65536> lut{};
-        constexpr int kMaxDisplayDepth = 5000; // mm; hot end of the turbo gradient
+    // Depth-value → RGB LUT, rebuilt when DEPTH_UNITS changes. Single-
+    // threaded (capture thread only) so a plain static is fine.
+    static std::array<std::array<uint8_t, 3>, 65536> kDepthLut{};
+    static float cachedScale = 0.0f;
+
+    const float scale = depthScaleM_.load(std::memory_order_relaxed);
+    if (scale != cachedScale) {
+        constexpr int kMaxDisplayDepth = 5000;
         constexpr int kMinDisplay = kDefaultMinValidDepth;
         constexpr int kRangeMm = kMaxDisplayDepth - kMinDisplay;
+        const float mmPerUnit = scale * 1000.0f;
         for (int d = 0; d < 65536; ++d) {
             if (d == 0) {
-                lut[d] = {20, 20, 20}; // invalid / no-data → neutral gray
+                kDepthLut[d] = {20, 20, 20};
                 continue;
             }
-            int idx = ((d - kMinDisplay) * 255) / kRangeMm;
+            const int d_mm = static_cast<int>(d * mmPerUnit);
+            int idx = ((d_mm - kMinDisplay) * 255) / kRangeMm;
             idx = std::clamp(idx, 0, 255);
-            lut[d] = {kTurboR[idx], kTurboG[idx], kTurboB[idx]};
+            kDepthLut[d] = {kTurboR[idx], kTurboG[idx], kTurboB[idx]};
         }
-        return lut;
-    }();
+        cachedScale = scale;
+    }
 
-    // Output at half resolution: the colormap is purely a visual preview
-    // (the CFG depth panel scales it to fit), so ¼ the pixels is visually
-    // indistinguishable while spending ¼ of the CPU. The raw depth values
-    // used for the crosshair / autofocus pipeline are untouched.
+    // Half-resolution output: the colormap is a visual preview, the
+    // raw data used for autofocus is untouched.
     const int outW = width / 2;
     const int outH = height / 2;
     QImage img(outW, outH, QImage::Format_RGB888);

@@ -200,7 +200,7 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                                 if (wasConnected != camConnected) camChanged = true
                             }
 
-                            // Re-request streams when a device reconnects (was off, now on)
+                            // Re-request streams whenever a remote device transitions to connected.
                             if ((rsChanged && _remoteRealSenseConnected.value) ||
                                 (camChanged && _remoteCaptureConnected)) {
                                 syncClient.sendStreamControl(
@@ -341,7 +341,11 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                 when (event) {
                     is com.selkacraft.alice.comm.network.SyncEvent.Connected -> {
                         log(LogCategory.SYSTEM, "Connected to desktop", LogLevel.INFO)
-                        // Push existing mapping to desktop if one is loaded
+                        // Desktop is authoritative for mode/settings: suppress
+                        // our own outbound mode sync while it pushes its state.
+                        suppressModeSyncUntil = System.currentTimeMillis() + 1500
+                        // Mapping is still phone-authoritative (the calibrator
+                        // produces it here), so push any loaded mapping up.
                         autofocusState.value.mapping?.let { mapping ->
                             val mappingJsonStr = mapping.toJson()
                             val mappingElement = kotlinx.serialization.json.Json.parseToJsonElement(mappingJsonStr)
@@ -350,17 +354,6 @@ class CameraViewModel(application: Application) : AndroidViewModel(application) 
                             )
                             log(LogCategory.AUTOFOCUS, "Pushed existing mapping to desktop: ${mapping.name}", LogLevel.INFO)
                         }
-                        // Sync current autofocus enabled state and mode
-                        val currentMode = settingsManager.autofocusMode.value
-                        val currentEnabled = settingsManager.autofocusEnabled.value
-                        syncClient.sendModeChange(
-                            currentMode,
-                            currentEnabled,
-                            settingsManager.autofocusConfidenceThreshold.value,
-                            settingsManager.autofocusSmoothing.value,
-                            settingsManager.autofocusResponseSpeed.value
-                        )
-                        // Request video streams from desktop
                         syncClient.sendStreamControl(color = true, depth = true, capture = true)
                     }
                     is com.selkacraft.alice.comm.network.SyncEvent.Disconnected ->
