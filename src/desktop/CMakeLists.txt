@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.21)
-project(AliceStudio VERSION 0.1 LANGUAGES CXX)
+project(AliceStudio 0.3 LANGUAGES CXX)
 
 # Default to a Release build when the caller hasn't specified one. Without
 # this, GCC falls back to -O0 and all of the depth-processing hot paths
