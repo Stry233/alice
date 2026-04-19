@@ -127,6 +127,8 @@ If you find code that should be attributed but isn't noted in the source, please
 
 Parts of the codebase were developed with assistance from **Claude** (Anthropic). All AI-generated code was reviewed and verified by the maintainer. Individual commits note the model used in the `Co-Authored-By` trailer.
 
+The assets in the video demo and documents are based on real photography, processed with Nano Banana Pro to optimize lighting and backgrounds.
+
 ## License
 
 [MIT](LICENSE)
