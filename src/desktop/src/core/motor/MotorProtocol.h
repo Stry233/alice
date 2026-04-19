@@ -32,8 +32,8 @@ using MotorResponse = std::variant<
 // ── Protocol ─────────────────────────────────────────────────────────
 
 /**
- * Motor controller protocol definitions and response parsing.
- * Ported from MotorProtocol.kt — identical command/response format.
+ * Wire protocol constants and formatting helpers for the nRF52840 motor dongle.
+ * Defines the text-based command/response grammar over CDC-ACM serial (115200-8N1).
  */
 namespace MotorProtocol {
 

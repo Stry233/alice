@@ -21,6 +21,11 @@ class MotorSerialHandler(
 ) {
     companion object {
         private const val TAG = "MotorSerialHandler"
+
+        // Defensive bounds on responseBuffer so a firmware glitch streaming
+        // non-newline-terminated data can't grow the buffer unboundedly.
+        private const val MAX_RESPONSE_BUFFER_BYTES = 8 * 1024
+        private const val RESPONSE_BUFFER_TRIM_TAIL = 1 * 1024
     }
 
     private val responseBuffer = StringBuilder()
@@ -162,6 +167,17 @@ class MotorSerialHandler(
     private fun handleSerialData(data: ByteArray) {
         val response = String(data)
         responseBuffer.append(response)
+
+        // Defensive cap: the motor protocol is strictly line-based, so any
+        // buffer that grows past a few KB without hitting '\n' is almost
+        // certainly a firmware glitch streaming garbage. Drop all but the
+        // trailing 1 KB so a misbehaving dongle can't OOM the process.
+        if (responseBuffer.length > MAX_RESPONSE_BUFFER_BYTES) {
+            Log.w(TAG, "Response buffer exceeded ${MAX_RESPONSE_BUFFER_BYTES}B without newline, trimming")
+            val tail = responseBuffer.substring(responseBuffer.length - RESPONSE_BUFFER_TRIM_TAIL)
+            responseBuffer.clear()
+            responseBuffer.append(tail)
+        }
 
         // Process complete lines
         val lines = responseBuffer.split("\n")

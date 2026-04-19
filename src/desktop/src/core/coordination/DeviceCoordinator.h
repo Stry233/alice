@@ -11,9 +11,10 @@ class CaptureCardManager;
 
 /**
  * Coordinates sequential device discovery and connection.
- * Ported from DeviceCoordinationManager.kt.
+ * Owns the lifecycle of motor, depth, and capture-card managers — auto-discovery,
+ * health-check watchdogs, and user-initiated restart/disconnect/reconnect.
  *
- * Connection order: Motor → RealSense (matching Android for consistency).
+ * Connection order: Motor -> RealSense (matching Android for consistency).
  */
 class DeviceCoordinator : public QObject {
     Q_OBJECT
@@ -41,6 +42,22 @@ public slots:
     /** Stop all devices. */
     void stop();
 
+    // ── User-initiated control ───────────────────────────────────────
+    // These flag the device as "manually disconnected" so the periodic
+    // health check leaves it alone until the user reconnects/restarts.
+
+    void disconnectMotor();
+    void reconnectMotor();
+    void restartMotor();
+
+    void disconnectRealSense();
+    void reconnectRealSense();
+    void restartRealSense();
+
+    void disconnectCaptureCard();
+    void reconnectCaptureCard();
+    void restartCaptureCard();
+
 signals:
     void motorConnectionChanged(bool connected);
     void realSenseConnectionChanged(bool connected);
@@ -64,6 +81,14 @@ private:
     bool realSenseConnected_ = false;
     bool captureCardConnected_ = false;
     bool started_ = false;
+
+    // User-initiated disconnects survive the periodic health check
+    // until the user explicitly reconnects.
+    bool motorManualDc_ = false;
+    bool realSenseManualDc_ = false;
+    bool captureCardManualDc_ = false;
+
+    static constexpr int kRestartDelayMs = 600;
 };
 
 } // namespace alice

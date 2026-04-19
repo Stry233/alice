@@ -13,6 +13,9 @@ namespace {
         case SyncMessageType::Heartbeat:       return "HEARTBEAT";
         case SyncMessageType::Authenticate:    return "AUTHENTICATE";
         case SyncMessageType::StreamControl:   return "STREAM_CONTROL";
+        case SyncMessageType::MeasurePosition: return "MEASURE_POSITION";
+        case SyncMessageType::FaceTracking:    return "FACE_TRACKING";
+        case SyncMessageType::SettingsSync:    return "SETTINGS_SYNC";
         }
         return "UNKNOWN";
     }
@@ -25,6 +28,9 @@ namespace {
         if (str == "HEARTBEAT")        return SyncMessageType::Heartbeat;
         if (str == "AUTHENTICATE")     return SyncMessageType::Authenticate;
         if (str == "STREAM_CONTROL")   return SyncMessageType::StreamControl;
+        if (str == "MEASURE_POSITION") return SyncMessageType::MeasurePosition;
+        if (str == "FACE_TRACKING")    return SyncMessageType::FaceTracking;
+        if (str == "SETTINGS_SYNC")   return SyncMessageType::SettingsSync;
         return SyncMessageType::Heartbeat;
     }
 }
@@ -137,6 +143,40 @@ SyncMessage SyncMessage::streamControl(bool color, bool depth, bool capture) {
         {"depth", depth},
         {"capture", capture}
     };
+    return msg;
+}
+
+SyncMessage SyncMessage::measurePosition(float x, float y) {
+    SyncMessage msg;
+    msg.type = SyncMessageType::MeasurePosition;
+    msg.sender = "desktop";
+    msg.payload = QJsonObject{
+        {"x", static_cast<double>(x)},
+        {"y", static_cast<double>(y)}
+    };
+    return msg;
+}
+
+SyncMessage SyncMessage::faceTracking(const QJsonArray &faces,
+                                      int frameWidth, int frameHeight,
+                                      int selectedId) {
+    SyncMessage msg;
+    msg.type = SyncMessageType::FaceTracking;
+    msg.sender = "desktop";
+    msg.payload = QJsonObject{
+        {"faces", faces},
+        {"frameWidth", frameWidth},
+        {"frameHeight", frameHeight},
+        {"selectedId", selectedId}
+    };
+    return msg;
+}
+
+SyncMessage SyncMessage::settingsSync(const QJsonObject &settings) {
+    SyncMessage msg;
+    msg.type = SyncMessageType::SettingsSync;
+    msg.sender = "desktop";
+    msg.payload = settings;
     return msg;
 }
 

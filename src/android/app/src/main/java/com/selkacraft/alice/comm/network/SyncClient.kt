@@ -2,6 +2,8 @@ package com.selkacraft.alice.comm.network
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.ColorSpace
+import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -61,6 +63,24 @@ class SyncClient(
     private var pendingStreamDepth_ = true
     private var pendingStreamCapture_ = true
 
+    // Per-type frame counters for diagnostic logging
+    private var colorFrameCount = 0
+    private var depthFrameCount = 0
+    private var captureFrameCount = 0
+
+    // Decode options pinned to sRGB + ARGB_8888. Without this, devices
+    // with wide-gamut displays (Display P3) can auto-convert untagged
+    // JPEGs to their native colour space, which pushes reds slightly
+    // warmer relative to the desktop preview. Forcing SRGB here pairs
+    // with the desktop side explicitly tagging frames as sRGB before
+    // encoding, so both screens interpret the pixels identically.
+    private val decodeOptions = BitmapFactory.Options().apply {
+        inPreferredConfig = Bitmap.Config.ARGB_8888
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            inPreferredColorSpace = ColorSpace.get(ColorSpace.Named.SRGB)
+        }
+    }
+
     fun connect(ip: String, port: Int, sessionToken: String) {
         disconnect()
         intentionalDisconnect = false
@@ -109,19 +129,32 @@ class SyncClient(
                 val frameType = bytes[0]
                 val jpegData = bytes.substring(FRAME_HEADER_SIZE).toByteArray()
 
-                val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size)
+                val bitmap = BitmapFactory.decodeByteArray(jpegData, 0, jpegData.size, decodeOptions)
                 if (bitmap == null) {
                     Log.w(TAG, "Failed to decode JPEG frame type=$frameType size=${jpegData.size}")
                     return
                 }
 
                 when (frameType) {
-                    FRAME_TYPE_COLOR -> _remoteColorBitmap.value = bitmap
-                    FRAME_TYPE_DEPTH -> _remoteDepthBitmap.value = bitmap
+                    FRAME_TYPE_COLOR -> {
+                        if (colorFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Color frame #$colorFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
+                        _remoteColorBitmap.value = bitmap
+                    }
+                    FRAME_TYPE_DEPTH -> {
+                        if (depthFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Depth frame #$depthFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
+                        _remoteDepthBitmap.value = bitmap
+                    }
                     FRAME_TYPE_CAPTURE -> {
-                        Log.d(TAG, "Capture frame received: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        if (captureFrameCount++ % 60 == 0) {
+                            Log.d(TAG, "Capture frame #$captureFrameCount: ${bitmap.width}x${bitmap.height}, jpeg=${jpegData.size}")
+                        }
                         _remoteCaptureFrame.value = bitmap
                     }
+                    else -> Log.w(TAG, "Unknown frame type=$frameType size=${bytes.size}")
                 }
             }
 

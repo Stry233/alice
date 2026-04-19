@@ -17,7 +17,8 @@ struct RawFaceDetection {
 
 /**
  * ONNX-based YOLO face detector.
- * Ported from OnnxFaceDetector.kt.
+ * Runs ONNX Runtime inference on YOLO-face models with multi-EP support (CPU, CUDA,
+ * CoreML), non-maximum suppression, and optional 5-point landmark extraction.
  *
  * Supports YOLOv8n/v10n/v11n face models from HuggingFace.
  * Input: 640x640, output auto-detected (transposed/non-transposed, center/corner format).
@@ -27,7 +28,7 @@ class FaceDetector : public QObject {
 
 public:
     static constexpr int kInputSize = 640;
-    static constexpr float kConfidenceThreshold = 0.45f;
+    static constexpr float kConfidenceThreshold = 0.5f;
     static constexpr float kIouThreshold = 0.45f;
     static constexpr int kMaxFaces = 4;
 
@@ -40,6 +41,10 @@ public:
     /** Check if model is loaded and ready. */
     bool isReady() const { return modelLoaded_; }
 
+    /** Which ONNX Runtime execution provider is actually being used
+     *  (e.g. "CUDA", "CPU"). Empty string before the model is loaded. */
+    QString executionProvider() const { return executionProvider_; }
+
     /** Run face detection on an image. Thread-safe. */
     std::vector<RawFaceDetection> detect(const QImage &image);
 
@@ -50,7 +55,7 @@ signals:
 private:
     std::vector<RawFaceDetection> postprocess(
         const float *outputData, int numBoxes, int numFeatures,
-        bool transposed, float scaleX, float scaleY);
+        bool transposed, float scaleX, float scaleY, int origW, int origH);
 
     static float computeIoU(const QRectF &a, const QRectF &b);
     std::vector<RawFaceDetection> nonMaxSuppression(
@@ -60,7 +65,7 @@ private:
     int outputBoxes_ = 0;
     int outputFeatures_ = 0;
     bool outputTransposed_ = false;
-    bool usesCornerFormat_ = false;
+    QString executionProvider_;
 
     struct OnnxImpl;
     std::unique_ptr<OnnxImpl> onnx_;

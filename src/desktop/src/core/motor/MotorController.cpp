@@ -1,5 +1,6 @@
 #include "core/motor/MotorController.h"
 #include <algorithm>
+#include <QDateTime>
 #include <QFileInfo>
 
 namespace alice {
@@ -52,7 +53,13 @@ void MotorController::disconnectDevice() {
         serial_->close();
     }
     serial_.reset();
-    connected_ = false;
+    bool wasConnected = connected_.exchange(false);
+    if (wasConnected) {
+        lastDisconnectMs_ = QDateTime::currentMSecsSinceEpoch();
+        connectedSinceMs_ = 0;
+    }
+    // Deliberately keep deviceDescription_ populated so the popover can
+    // still show "last seen as …" until a new device is plugged in.
     emit connectionChanged(false);
 }
 
@@ -84,8 +91,17 @@ bool MotorController::openPort(const QSerialPortInfo &portInfo) {
             this, &MotorController::onSerialError);
 
     connected_ = true;
+    connectedSinceMs_ = QDateTime::currentMSecsSinceEpoch();
     lastScanFailed_ = false;
     lineBuffer_.clear();
+
+    // Capture the actual device description so the UI popover can show a
+    // real name instead of a hardcoded "nRF52840" fallback.
+    deviceDescription_ = portInfo.description();
+    if (deviceDescription_.isEmpty())
+        deviceDescription_ = portInfo.portName();
+    devicePortName_ = portInfo.systemLocation();
+
     emit connectionChanged(true);
     return true;
 }
@@ -94,16 +110,6 @@ void MotorController::setPosition(int position) {
     if (!connected_ || !serial_) return;
 
     int transformed = applyTransform(position);
-
-    // Exponential moving average smoothing
-    if (smoothingEnabled_ && hasPreviousPosition_) {
-        smoothedPosition_ = smoothedPosition_ * (1.0f - kSmoothingAlpha)
-                          + static_cast<float>(transformed) * kSmoothingAlpha;
-        transformed = std::clamp(static_cast<int>(smoothedPosition_), 0, 4095);
-    } else {
-        smoothedPosition_ = static_cast<float>(transformed);
-        hasPreviousPosition_ = true;
-    }
 
     auto cmd = MotorProtocol::formatPositionCommand(transformed);
     serial_->write(cmd.c_str(), static_cast<qint64>(cmd.size()));
@@ -138,7 +144,14 @@ void MotorController::onReadyRead() {
     QByteArray data = serial_->readAll();
     lineBuffer_.append(QString::fromUtf8(data));
 
-    // Process complete lines
+    // Defensive cap: the protocol is strictly line-based (newline-terminated
+    // ASCII), so any buffer that grows past a few KB without hitting '\n' is
+    // almost certainly a firmware glitch streaming binary garbage. Drop all
+    // but the trailing 1 KB so a misbehaving dongle can't OOM the process.
+    if (lineBuffer_.size() > kMaxLineBufferBytes) {
+        lineBuffer_ = lineBuffer_.right(kLineBufferTrimTail);
+    }
+
     int newlineIdx;
     while ((newlineIdx = lineBuffer_.indexOf('\n')) >= 0) {
         QString line = lineBuffer_.left(newlineIdx).trimmed();
@@ -184,8 +197,13 @@ void MotorController::onSerialError(QSerialPort::SerialPortError err) {
 }
 
 int MotorController::applyTransform(int position) const {
-    int pos = std::clamp(position + offset_, 0, 4095);
-    if (reversed_) pos = 4095 - pos;
+    // nRF52840 motor dongle uses a 12-bit encoder (0..kMaxPosition=4095).
+    // `reversed_` is a per-install setting for rigs where the physical lens
+    // rotation direction is inverted — we mirror about the midpoint so the
+    // caller-facing API stays "0 = near, max = far" regardless.
+    int pos = std::clamp(position + offset_, MotorProtocol::kMinPosition,
+                         MotorProtocol::kMaxPosition);
+    if (reversed_) pos = MotorProtocol::kMaxPosition - pos;
     return pos;
 }
 

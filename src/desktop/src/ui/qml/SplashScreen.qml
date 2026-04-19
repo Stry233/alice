@@ -46,7 +46,7 @@ Window {
             anchors.horizontalCenter: parent.horizontalCenter
             y: logo.y + logo.height + 14
             text: "Alice Studio"
-            font.family: "Inter"
+            font.family: "Alice Inter"
             font.pixelSize: 28
             font.weight: Font.Bold
             font.letterSpacing: 3
@@ -58,7 +58,7 @@ Window {
             anchors.horizontalCenter: parent.horizontalCenter
             y: logo.y + logo.height + 48
             text: "Autofocus Lens Interface for Cinema Equipment"
-            font.family: "Inter"
+            font.family: "Alice Inter"
             font.pixelSize: 12
             color: "#8A9BA8"
         }
@@ -87,7 +87,7 @@ Window {
             anchors.horizontalCenter: parent.horizontalCenter
             anchors.bottom: parent.bottom; anchors.bottomMargin: 54
             text: "Initializing..."
-            font.family: "Inter"; font.pixelSize: 11
+            font.family: "Alice Inter"; font.pixelSize: 11
             color: "#5C6B7A"
         }
 
@@ -96,7 +96,7 @@ Window {
             anchors.right: parent.right; anchors.bottom: parent.bottom
             anchors.margins: 16
             text: "v0.2"
-            font.family: "Inter"; font.pixelSize: 11
+            font.family: "Alice Inter"; font.pixelSize: 11
             color: "#5C6B7A"
         }
 
@@ -105,7 +105,7 @@ Window {
             anchors.left: parent.left; anchors.bottom: parent.bottom
             anchors.margins: 16
             text: "\u00A9 2025 SelkaCraft"
-            font.family: "Inter"; font.pixelSize: 11
+            font.family: "Alice Inter"; font.pixelSize: 11
             color: "#5C6B7A"
         }
     }

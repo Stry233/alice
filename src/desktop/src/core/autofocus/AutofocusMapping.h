@@ -68,7 +68,9 @@ enum class MappingPreset {
 
 /**
  * Complete autofocus mapping configuration.
- * Ported from AutofocusMappingData.kt.
+ * Holds a named set of sorted depth-to-motor-position calibration points with linear
+ * interpolation, full validation, JSON serialization, and a preset library (Linear,
+ * Logarithmic, Portrait, Landscape, Macro).
  */
 class AutofocusMapping {
 public:

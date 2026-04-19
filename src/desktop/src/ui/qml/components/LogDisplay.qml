@@ -33,14 +33,30 @@ Item {
 
         // Scrollable, selectable log
         ScrollView {
+            id: logScroll
             Layout.fillWidth: true
             Layout.fillHeight: true
             clip: true
+            // Each log entry is kept on exactly one line (see TextArea
+            // below). Show the horizontal scrollbar so the user can pan
+            // right to read long lines, but pin contentX to 0 whenever
+            // a new entry arrives — the view should never drift on its
+            // own. Only explicit user interaction moves it.
+            ScrollBar.horizontal.policy: ScrollBar.AsNeeded
+            property bool userScrolledX: false
+            Connections {
+                target: logScroll.ScrollBar.horizontal
+                function onPressedChanged() {
+                    if (logScroll.ScrollBar.horizontal.pressed) logScroll.userScrolledX = true
+                }
+            }
 
             TextArea {
                 id: logArea
                 readOnly: true
                 selectByMouse: true
+                // One entry per line, no auto-wrap. Long lines extend
+                // horizontally and the ScrollView exposes a scrollbar.
                 wrapMode: TextArea.NoWrap
                 font.family: Theme.fontFamilyMono
                 font.pixelSize: Theme.fontSizeMicro
@@ -50,16 +66,24 @@ Item {
                 background: null
                 leftPadding: 0; rightPadding: 0; topPadding: 0; bottomPadding: 0
 
-                // Build rich text from messages
+                // Build rich text from messages. The ASCII banner that
+                // AppController seeds at startup has no timestamp prefix,
+                // so we detect those contiguous lines at the top and render
+                // them in a separate <pre> with a tighter line-height — the
+                // default 1.4 leaves big gaps in block art. Everything after
+                // the first timestamped entry gets the regular log spacing.
                 textFormat: TextArea.RichText
                 text: {
                     if (!messages || messages.length === 0) return ""
-                    var lines = []
-                    for (var i = 0; i < messages.length; i++) {
-                        var msg = messages[i]
-                        var line = msg
 
-                        // Extract timestamp if present (format: [HH:MM:SS.mmm])
+                    function escapeHtml(s) {
+                        return s.replace(/&/g, "&amp;")
+                                .replace(/</g, "&lt;")
+                                .replace(/>/g, "&gt;")
+                                .replace(/ /g, "&nbsp;")
+                    }
+
+                    function formatLogLine(msg) {
                         var tsMatch = msg.match(/^\[(\d{2}:\d{2}:\d{2}\.\d{3})\]\s*/)
                         var ts = ""
                         var rest = msg
@@ -68,11 +92,8 @@ Item {
                             rest = msg.substring(tsMatch[0].length)
                         }
 
-                        // Determine severity and color
-                        var tagColor = Theme.textDisabled  // default for timestamp
                         var msgColor = Theme.textSecondary
                         var tag = ""
-
                         if (rest.indexOf("[ERROR]") !== -1) {
                             msgColor = Theme.dangerText
                             tag = "ERROR"
@@ -91,7 +112,6 @@ Item {
                             rest = rest.replace("[INFO]", "").trim()
                         }
 
-                        // Extract category [MOTOR], [SYSTEM], etc.
                         var catMatch = rest.match(/^\[([A-Z]+)\]\s*/)
                         var cat = ""
                         if (catMatch) {
@@ -99,19 +119,45 @@ Item {
                             rest = rest.substring(catMatch[0].length)
                         }
 
-                        // Build formatted line
                         var html = ""
                         if (ts) html += "<span style='color:" + Theme.textDisabled + ";'>" + ts + "</span> "
-                        if (tag) {
-                            var tagBg = tag === "ERROR" ? Theme.dangerMuted : tag === "WARN" ? Theme.warningMuted : "transparent"
-                            html += "<span style='color:" + msgColor + ";font-weight:600;'>[" + tag + "]</span> "
-                        }
+                        if (tag) html += "<span style='color:" + msgColor + ";font-weight:600;'>[" + tag + "]</span> "
                         if (cat) html += "<span style='color:" + Theme.primary + ";'>[" + cat + "]</span> "
                         html += "<span style='color:" + msgColor + ";'>" + rest + "</span>"
-
-                        lines.push(html)
+                        return html
                     }
-                    return "<pre style='margin:0;line-height:1.4;'>" + lines.join("<br>") + "</pre>"
+
+                    var bannerLines = []
+                    var logLines = []
+                    var inBanner = true
+                    for (var i = 0; i < messages.length; i++) {
+                        var msg = messages[i]
+                        var looksLikeLog = msg.match(/^\[\d{2}:\d{2}:\d{2}\.\d{3}\]/)
+                        if (looksLikeLog) inBanner = false
+
+                        if (inBanner) {
+                            var colored = "<span style='color:" + Theme.primary + ";'>"
+                                        + escapeHtml(msg) + "</span>"
+                            bannerLines.push(colored)
+                        } else {
+                            logLines.push(formatLogLine(msg))
+                        }
+                    }
+
+                    // <pre> preserves whitespace (white-space: pre) which
+                    // pairs with TextArea.NoWrap above to guarantee each
+                    // entry stays on exactly one line — the horizontal
+                    // ScrollView handles overflow.
+                    var out = ""
+                    if (bannerLines.length > 0) {
+                        out += "<pre style='margin:0;line-height:0.95;'>"
+                            + bannerLines.join("<br>") + "</pre>"
+                    }
+                    if (logLines.length > 0) {
+                        out += "<pre style='margin:0;line-height:1.4;'>"
+                            + logLines.join("<br>") + "</pre>"
+                    }
+                    return out
                 }
 
                 // Start at top to show ASCII art, then auto-scroll after delay
@@ -129,6 +175,13 @@ Item {
                     if (autoScrollEnabled) {
                         Qt.callLater(function() {
                             logArea.cursorPosition = logArea.length
+                            // Reset the HORIZONTAL scroll to the left on every
+                            // new entry — unless the user has manually panned
+                            // right (then respect their position). The Flickable
+                            // behind ScrollView exposes contentX.
+                            if (!logScroll.userScrolledX && logScroll.contentItem) {
+                                logScroll.contentItem.contentX = 0
+                            }
                         })
                     }
                 }

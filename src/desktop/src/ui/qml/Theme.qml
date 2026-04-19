@@ -55,8 +55,8 @@ QtObject {
     readonly property int radiusLg:   dp(6)
 
     // ── Typography (2x HTML CSS values) ────────────────────────────
-    readonly property string fontFamily:     "Inter"
-    readonly property string fontFamilyMono: "RobotoMono"
+    readonly property string fontFamily:     "Alice Inter"
+    readonly property string fontFamilyMono: "Alice Mono"
     readonly property int fontSizeH1:      dp(36)
     readonly property int fontSizeH2:      dp(28)
     readonly property int fontSizeH3:      dp(24)
@@ -67,11 +67,21 @@ QtObject {
     readonly property real sectionLetterSpacing: dp(2.4)
 
     // ── Animation ──────────────────────────────────────────────────
+    // Strict token mapping per Interaction & Motion spec:
+    //   Fast (100ms)  — hover color swaps, button fills, text colour lerps
+    //   Normal (150ms)— opacity fades, popovers, reticle translation
+    //   Slow (200ms)  — spatial movements (tab indicators, origin slides)
     readonly property int durationFast:    100
     readonly property int durationNormal:  150
     readonly property int durationSlow:    200
     readonly property int easingEnter:  Easing.OutCubic
     readonly property int easingExit:   Easing.InCubic
+    readonly property int easingMotion: Easing.InOutCubic
+
+    // Vertical offset applied to popovers when they slide in from their
+    // triggering badge (DRD §1.1 "Rule of Tethering"). Kept in one place
+    // so all contextual overlays share the same tether distance.
+    readonly property int popoverSlideOffset: 6
 
     // ── Control sizes (2x HTML) ────────────────────────────────────
     readonly property int toolbarHeight:  dp(64)

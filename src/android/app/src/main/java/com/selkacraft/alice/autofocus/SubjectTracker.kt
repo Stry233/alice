@@ -27,7 +27,24 @@ class SubjectTracker {
         private const val PREDICTION_HOLD_FRAMES = 5  // Hold prediction for ~0.1s at 30fps
         private const val STABILITY_FRAMES_REQUIRED = 2  // Frames before showing new subject
 
-        // Scoring weights
+        // Priority scoring weights for face selection. These feed into
+        // calculateScore() below and must sum to 1.0 (0.30 + 0.25 + 0.25
+        // + 0.20) so the output stays in the normalised 0..1 range.
+        //
+        //   SIZE      — bigger faces win. A subject that fills the frame
+        //               is almost certainly the intended target.
+        //   CENTER    — framing bias. Faces near the image centre are
+        //               weighted slightly over edge detections.
+        //   EYES      — favour faces where we can see the eyes so Eye AF
+        //               has something to lock onto.
+        //   STABILITY — reward tracks that have survived multiple frames
+        //               over brand-new detections; reduces flicker when
+        //               a spurious detection briefly beats the real one.
+        //
+        // Tune by redistributing among the four constants; keep the sum
+        // at 1.0 to preserve the score range. Downstream hysteresis in
+        // AutofocusCoordinator.pickPrimaryWithHysteresis adds sticky
+        // handoff on top of these weights.
         private const val SCORE_WEIGHT_SIZE = 0.3f
         private const val SCORE_WEIGHT_CENTER = 0.25f
         private const val SCORE_WEIGHT_EYES = 0.25f

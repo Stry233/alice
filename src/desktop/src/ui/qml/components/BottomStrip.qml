@@ -25,7 +25,15 @@ Rectangle {
         Row {
             spacing: 0
             Text { text: "Conf: "; color: Theme.textSecondary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
-            Text { text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"; color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
+            Text {
+                // Pad to 3 digits (space-padded) so "99%" and "100%" occupy
+                // the same pixel width in monospace. Prevents the strip from
+                // jiggling each time confidence crosses the 100/99 boundary.
+                text: String(Math.round((alice ? alice.depthConfidence : 0) * 100)).padStart(3, "\u00A0") + "%"
+                color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                font.family: Theme.fontFamilyMono; font.pixelSize: stripFont
+                Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+            }
         }
 
         Row {
@@ -37,19 +45,28 @@ Rectangle {
         Row {
             spacing: 0
             Text { text: "Target: "; color: Theme.textSecondary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
-            Text { text: alice && alice.targetMotorPosition >= 0 ? alice.targetMotorPosition.toString() : "—"; color: Theme.primary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
+            Text {
+                text: alice && alice.targetMotorPosition >= 0 ? alice.targetMotorPosition.toString() : "—"
+                color: Theme.primary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont
+            }
         }
 
         Text {
             text: alice && alice.activelyFocusing ? ["MF", "AF-S", "AF-C", "AF-F"][alice.focusMode] : ["MF", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
             color: alice && alice.activelyFocusing ? Theme.success : Theme.textPrimary
             font.family: Theme.fontFamilyMono; font.pixelSize: stripFont; font.weight: Font.Bold
+            Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
         }
 
         Rectangle { width: 1; Layout.fillHeight: true; Layout.topMargin: Theme.dp(8); Layout.bottomMargin: Theme.dp(8); color: Theme.border }
 
         Text { text: "CPU " + Math.round(sysMonitor ? sysMonitor.cpuUsage : 0) + "%"; color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
-        Text { text: "GPU " + Math.round(sysMonitor ? sysMonitor.gpuUsage : 0) + "%"; color: (sysMonitor && sysMonitor.gpuUsage > 80) ? Theme.warning : Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
+        Text {
+            text: "GPU " + Math.round(sysMonitor ? sysMonitor.gpuUsage : 0) + "%"
+            color: (sysMonitor && sysMonitor.gpuUsage > 80) ? Theme.warning : Theme.textPrimary
+            font.family: Theme.fontFamilyMono; font.pixelSize: stripFont
+            Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+        }
         Text { text: "MEM " + (sysMonitor ? sysMonitor.memoryFormatted : "0M"); color: Theme.textPrimary; font.family: Theme.fontFamilyMono; font.pixelSize: stripFont }
 
         Item { Layout.fillWidth: true }

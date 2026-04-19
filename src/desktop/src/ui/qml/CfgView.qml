@@ -14,58 +14,97 @@ Item {
         spacing: 0
 
         // Sub-tab bar — height dp(48), font dp(22), indicator dp(4)
+        //
+        // A single indicator Rectangle slides between tab positions. We
+        // imperatively sync its x/width via `syncIndicator()` whenever any
+        // tab's geometry settles or the current tab changes — relying on
+        // binding-through-array reassignment was flaky on first launch
+        // because QML didn't always emit a change notification when the
+        // underlying JS array reference stayed the same.
         Rectangle {
             Layout.fillWidth: true
             height: Theme.dp(48)
             color: Theme.surface
 
-            RowLayout {
+            Item {
+                id: tabBar
                 anchors.fill: parent
                 anchors.leftMargin: Theme.dp(24)
-                spacing: 0
 
-                Repeater {
-                    model: ["Calibration", "Settings", "Connection"]
-
-                    Item {
-                        required property string modelData
-                        required property int index
-
-                        Layout.preferredWidth: implicitWidth
-                        implicitWidth: tabLabel.implicitWidth + Theme.dp(64)
-                        Layout.fillHeight: true
-
-                        Text {
-                            id: tabLabel
-                            anchors.centerIn: parent
-                            text: modelData
-                            font.family: Theme.fontFamily
-                            font.pixelSize: Theme.fontSizeSmall
-                            font.weight: currentTab === index ? Font.DemiBold : Font.Normal
-                            color: currentTab === index ? Theme.textPrimary : Theme.textSecondary
-                        }
-
-                        Rectangle {
-                            anchors.bottom: parent.bottom
-                            width: parent.width; height: Theme.dp(4)
-                            color: currentTab === index ? Theme.primary : "transparent"
-                        }
-
-                        MouseArea {
-                            anchors.fill: parent
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: currentTab = index
-                        }
-                    }
+                function syncIndicator() {
+                    var item = tabRepeater.itemAt(cfgView.currentTab)
+                    if (!item || item.width <= 0) return
+                    tabIndicator.x = item.x
+                    tabIndicator.width = item.width
                 }
 
-                Item { Layout.fillWidth: true }
+                RowLayout {
+                    anchors.fill: parent
+                    spacing: 0
+
+                    Repeater {
+                        id: tabRepeater
+                        model: ["Calibration", "Settings", "Connection"]
+
+                        Item {
+                            id: tabItem
+                            required property string modelData
+                            required property int index
+
+                            Layout.preferredWidth: implicitWidth
+                            implicitWidth: tabLabel.implicitWidth + Theme.dp(64)
+                            Layout.fillHeight: true
+
+                            Text {
+                                id: tabLabel
+                                anchors.centerIn: parent
+                                text: modelData
+                                font.family: Theme.fontFamily
+                                font.pixelSize: Theme.fontSizeSmall
+                                font.weight: currentTab === index ? Font.DemiBold : Font.Normal
+                                color: currentTab === index ? Theme.textPrimary : Theme.textSecondary
+                                Behavior on color { ColorAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
+                            }
+
+                            onXChanged: if (index === cfgView.currentTab) tabBar.syncIndicator()
+                            onWidthChanged: if (index === cfgView.currentTab) tabBar.syncIndicator()
+                            Component.onCompleted: if (index === cfgView.currentTab) tabBar.syncIndicator()
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: currentTab = index
+                            }
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+                }
+
+                // Single sliding underline indicator (DRD §B). x/width are
+                // pushed imperatively by syncIndicator(); Behavior still
+                // animates direct assignments, so every click slides.
+                Rectangle {
+                    id: tabIndicator
+                    anchors.bottom: parent.bottom
+                    height: Theme.dp(4)
+                    color: Theme.primary
+                    radius: 1
+                    Behavior on x { NumberAnimation { duration: Theme.durationSlow; easing.type: Easing.InOutCubic } }
+                    Behavior on width { NumberAnimation { duration: Theme.durationSlow; easing.type: Easing.InOutCubic } }
+                }
+
+                Connections {
+                    target: cfgView
+                    function onCurrentTabChanged() { tabBar.syncIndicator() }
+                }
+
+                Component.onCompleted: Qt.callLater(tabBar.syncIndicator)
             }
         }
 
         Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-        // Content
         StackLayout {
             Layout.fillWidth: true
             Layout.fillHeight: true

@@ -180,7 +180,7 @@ void SyncServer::sendHeartbeat() {
     if (!authenticatedClient_) return;
     static auto startTime = QDateTime::currentMSecsSinceEpoch();
     auto uptime = QDateTime::currentMSecsSinceEpoch() - startTime;
-    broadcast(SyncMessage::heartbeat(uptime, "AliceDesktop/0.2"));
+    broadcast(SyncMessage::heartbeat(uptime, QStringLiteral("AliceStudio/") + ALICE_APP_VERSION));
 }
 
 void SyncServer::generateSessionToken() {

@@ -19,7 +19,9 @@ Q_NAMESPACE
 
 /**
  * Main autofocus controller.
- * Ported from AutofocusController.kt — identical focus logic and parameters.
+ * Focus-mode state machine supporting Manual, AF-S, AF-C, and AF-F (face-tracking).
+ * Maps depth measurements to motor positions via AutofocusMapping, handles tap-to-focus
+ * triggers, and delivers debounced target positions to the motor controller.
  */
 class AutofocusController : public QObject {
     Q_OBJECT
@@ -33,7 +35,7 @@ class AutofocusController : public QObject {
 
 public:
     static constexpr int64_t kFocusDebounceMs = 33;   // ~30 Hz
-    static constexpr float kSmoothingAlpha = 0.2f;
+    static constexpr float kDefaultSmoothingAlpha = 0.4f;
     static constexpr float kDefaultConfidenceThreshold = 0.7f;
 
     explicit AutofocusController(QObject *parent = nullptr);
@@ -75,8 +77,8 @@ public slots:
 
     /** Configuration updates. */
     void setConfidenceThreshold(float threshold);
-    void setSmoothingEnabled(bool enabled);
-    void setResponseSpeed(int speed);
+    void setSmoothingAlpha(float alpha);
+    float smoothingAlpha() const { return smoothingAlpha_; }
 
 signals:
     void enabledChanged(bool enabled);
@@ -121,8 +123,9 @@ private:
 
     // Settings
     float confidenceThreshold_ = kDefaultConfidenceThreshold;
-    bool smoothingEnabled_ = true;
-    int responseSpeed_ = 50;
+    // EMA weight for the autofocus motor target. Higher values track
+    // faster but amplify depth sensor noise. Range [0.05, 1.0].
+    float smoothingAlpha_ = kDefaultSmoothingAlpha;
 
     // Timing
     QElapsedTimer debounceTimer_;

@@ -20,7 +20,10 @@ enum class SyncMessageType {
     CalibrationSync,  // Push/pull calibration mappings
     Heartbeat,        // Keep-alive with device info
     Authenticate,     // Initial handshake with token
-    StreamControl     // Enable/disable video stream channels
+    StreamControl,    // Enable/disable video stream channels
+    MeasurePosition,  // Measurement crosshair position {x, y} (0..1 normalized)
+    FaceTracking,     // Face bounding-box / tracker state broadcast
+    SettingsSync      // Push AF + motor tuning parameters to the peer
 };
 
 struct SyncMessage {
@@ -45,6 +48,13 @@ struct SyncMessage {
     static SyncMessage heartbeat(int64_t uptime, const QString &deviceInfo = "");
     static SyncMessage authenticate(const QString &token);
     static SyncMessage streamControl(bool color, bool depth, bool capture);
+    static SyncMessage measurePosition(float x, float y);
+    // `faces` carries the already-prepared JSON array for the "faces" field.
+    // `frameWidth`/`frameHeight` are the pixel dimensions of the source image.
+    static SyncMessage faceTracking(const QJsonArray &faces,
+                                    int frameWidth, int frameHeight,
+                                    int selectedId);
+    static SyncMessage settingsSync(const QJsonObject &settings);
 };
 
 namespace SyncProtocolConstants {

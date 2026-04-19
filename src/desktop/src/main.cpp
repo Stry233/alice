@@ -17,7 +17,6 @@
 #include "core/system/SystemMonitor.h"
 #include "ui/VideoRenderer.h"
 #include "ui/DepthRenderer.h"
-#include "ui/FaceOverlay.h"
 #include "ui/HistogramRenderer.h"
 #include "ui/SplashWindow.h"
 
@@ -33,8 +32,8 @@ int main(int argc, char *argv[])
     QApplication app(argc, argv);
     app.setOrganizationName("SelkaCraft");
     app.setOrganizationDomain("selkacraft.com");
-    app.setApplicationName("Alice Studio");
-    app.setApplicationVersion("0.1");
+    app.setApplicationName(ALICE_APP_NAME);
+    app.setApplicationVersion(ALICE_APP_VERSION);
 
     // App icon set after splash painting below
 
@@ -47,7 +46,12 @@ int main(int argc, char *argv[])
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/Inter-Bold.ttf");
     QFontDatabase::addApplicationFont(":/qt/qml/Alice/UI/assets/fonts/RobotoMono-Regular.ttf");
 
-    QFont defaultFont("Inter");
+    // Reference the bundled family by its renamed identity ("Alice Inter",
+    // set by release/rename_bundled_fonts.py on the .ttf name tables) so
+    // it can't collide with a system-installed "Inter". Qt's resolver
+    // would otherwise pick either font based on registration order and
+    // yield subtly different rendering across machines.
+    QFont defaultFont("Alice Inter");
     defaultFont.setPixelSize(16);
     app.setFont(defaultFont);
 
@@ -102,15 +106,15 @@ int main(int argc, char *argv[])
         }
 
         // Title
-        QFont titleFont("Inter", 11, QFont::Bold);
+        QFont titleFont("Alice Inter", 11, QFont::Bold);
         titleFont.setLetterSpacing(QFont::AbsoluteSpacing, 4);
         titleFont.setCapitalization(QFont::AllUppercase);
         p.setFont(titleFont);
         p.setPen(QColor("#E1E8ED"));
-        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, "Alice Studio");
+        p.drawText(QRect(0, contentTop + 64, w, 28), Qt::AlignHCenter, ALICE_APP_NAME);
 
         // Subtitle
-        p.setFont(QFont("Inter", 8));
+        p.setFont(QFont("Alice Inter", 8));
         p.setPen(QColor("#8A9BA8"));
         p.drawText(QRect(0, contentTop + 100, w, 16), Qt::AlignHCenter,
                    "Autofocus Lens Interface for Cinema Equipment");
@@ -125,9 +129,9 @@ int main(int argc, char *argv[])
         p.drawRoundedRect(barX, barY, 70, 3, 1, 1);
 
         // Version — bottom right in footer
-        p.setFont(QFont("Inter", 7));
+        p.setFont(QFont("Alice Inter", 7));
         p.setPen(QColor("#5C6B7A"));
-        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v0.1");
+        p.drawText(QRect(w - 60, h - 22, 44, 12), Qt::AlignRight, "v" ALICE_APP_VERSION);
 
         // Copyright — bottom left in footer
         p.drawText(QRect(16, h - 22, 200, 12), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");
@@ -159,7 +163,6 @@ int main(int argc, char *argv[])
 
     qmlRegisterType<alice::VideoRenderer>("Alice.Renderers", 1, 0, "VideoRenderer");
     qmlRegisterType<alice::DepthRenderer>("Alice.Renderers", 1, 0, "DepthRenderer");
-    qmlRegisterType<alice::FaceOverlay>("Alice.Renderers", 1, 0, "FaceOverlay");
     qmlRegisterType<alice::HistogramRenderer>("Alice.Renderers", 1, 0, "HistogramRenderer");
 
     splash.showMessage("Preparing engine...", Qt::AlignBottom | Qt::AlignHCenter, QColor("#5C6B7A"));

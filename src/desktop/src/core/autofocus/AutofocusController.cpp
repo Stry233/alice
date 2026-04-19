@@ -98,9 +98,15 @@ void AutofocusController::processDepthData(float depthMeters, float confidence,
 
     if (confidence < confidenceThreshold_) return;
 
-    // Focus point proximity check
-    float dist = std::sqrt((x - focusX_) * (x - focusX_) + (y - focusY_) * (y - focusY_));
-    if (dist > 0.1f) return;
+    // Focus point proximity check for AF-C only. In AF-F the measurement
+    // position is retargeted at the detected face each frame, so the
+    // measured depth is already the face depth and we must not reject it
+    // just because the face isn't near the tapped focus point.
+    if (mode_ == FocusMode::ContinuousAuto) {
+        const float dist = std::sqrt((x - focusX_) * (x - focusX_) +
+                                     (y - focusY_) * (y - focusY_));
+        if (dist > 0.1f) return;
+    }
 
     // Debounce (33ms = ~30Hz)
     if (mode_ == FocusMode::ContinuousAuto || mode_ == FocusMode::FaceTracking) {
@@ -166,12 +172,8 @@ void AutofocusController::setConfidenceThreshold(float threshold) {
     confidenceThreshold_ = std::clamp(threshold, 0.0f, 1.0f);
 }
 
-void AutofocusController::setSmoothingEnabled(bool enabled) {
-    smoothingEnabled_ = enabled;
-}
-
-void AutofocusController::setResponseSpeed(int speed) {
-    responseSpeed_ = std::clamp(speed, 0, 100);
+void AutofocusController::setSmoothingAlpha(float alpha) {
+    smoothingAlpha_ = std::clamp(alpha, 0.05f, 1.0f);
 }
 
 // ── Private ──────────────────────────────────────────────────────────
@@ -199,18 +201,29 @@ void AutofocusController::calculateAndApplyFocus(float depth) {
 
     int finalPos = *motorPos;
 
-    // Exponential moving average smoothing
-    if (smoothingEnabled_ && lastMotorPosition_.has_value()) {
-        float smoothed = static_cast<float>(*lastMotorPosition_) * (1.0f - kSmoothingAlpha)
-                       + static_cast<float>(finalPos) * kSmoothingAlpha;
+    // Exponential moving average smoothing (alpha < 1.0 enables it)
+    if (smoothingAlpha_ < 1.0f && lastMotorPosition_.has_value()) {
+        float smoothed = static_cast<float>(*lastMotorPosition_) * (1.0f - smoothingAlpha_)
+                       + static_cast<float>(finalPos) * smoothingAlpha_;
         if (std::isfinite(smoothed)) {
             finalPos = std::clamp(static_cast<int>(smoothed), 0, 4095);
         }
     }
 
     lastMotorPosition_ = finalPos;
-    targetPosition_ = finalPos;
     depth_ = depth;
+
+    // Dedup: skip the emit (and downstream serial write / QML rebind /
+    // network broadcast) when the target hasn't actually changed. With
+    // confidence now saturating at 1.0, processDepthData passes on every
+    // frame and calculateAndApplyFocus runs at the 30 Hz debounce rate;
+    // without this check, a perfectly still scene still bombards the
+    // motor with identical commands and pegs the UI thread re-rendering
+    // the same motor number. Cheap int compare, saves a lot downstream.
+    if (targetPosition_.has_value() && *targetPosition_ == finalPos) {
+        return;
+    }
+    targetPosition_ = finalPos;
 
     emit targetPositionChanged(finalPos);
     emit stateChanged();

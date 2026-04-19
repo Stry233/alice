@@ -320,11 +320,17 @@ fun CameraScreen(
                 }
             }
 
-            // Device status overlay (top-left corner)
+            // Device status overlay (top-left corner).
+            // In sync mode the counts reflect the desktop's 3 device slots
+            // (motor / depth / camera) so users see e.g. 2/3 after manually
+            // disconnecting a device on the PC side.
+            val effectiveActiveDeviceCount by viewModel.effectiveActiveDeviceCount.collectAsState()
+            val effectiveTotalDeviceSlots by viewModel.effectiveTotalDeviceSlots.collectAsState()
+            val effectiveCaptureCardConnected by viewModel.effectiveCaptureCardConnected.collectAsState()
             DeviceStatusIndicator(
-                connectedDevices = coordinatorState.connectedDevices.size,
-                activeDevices = coordinatorState.activeDevices.size,
-                cameraActive = viewModel.isCameraActive() || effectiveCameraFrame != null,
+                connectedDevices = effectiveTotalDeviceSlots,
+                activeDevices = effectiveActiveDeviceCount,
+                cameraActive = viewModel.isCameraActive() || effectiveCaptureCardConnected || effectiveCameraFrame != null,
                 motorActive = effectiveMotorConnected,
                 realSenseActive = effectiveRealSenseConnected,
                 totalBandwidthUsed = coordinatorState.totalBandwidthUsed,

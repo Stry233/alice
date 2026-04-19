@@ -24,29 +24,27 @@ class AutofocusController(
 ) {
     companion object {
         private const val TAG = "AutofocusController"
-        /** Debounce interval for focus updates (~30 Hz) */
         private const val FOCUS_DEBOUNCE_MS = 33L
-        /** Position smoothing factor (0-1, lower = more smoothing) */
-        private const val FOCUS_SMOOTHING_FACTOR = 0.2f
-        /** Default confidence threshold for depth measurements */
-        private const val CONFIDENCE_THRESHOLD_DEFAULT = 0.7f
+        private const val DEFAULT_SMOOTHING_ALPHA = 0.4f
+        private const val DEFAULT_CONFIDENCE_THRESHOLD = 0.7f
     }
 
-    // Component instances
     private val mappingManager = AutofocusMappingManager(context)
 
-    // State management
     private val _state = MutableStateFlow(AutofocusState())
     val state: StateFlow<AutofocusState> = _state.asStateFlow()
 
-    // Events for UI feedback
     private val _events = MutableSharedFlow<AutofocusEvent>()
     val events: SharedFlow<AutofocusEvent> = _events.asSharedFlow()
 
-    // Settings
-    private var confidenceThreshold = CONFIDENCE_THRESHOLD_DEFAULT
-    private var enableSmoothing = true
-    private var responseSpeed = 50 // 0-100
+    // Runtime-adjustable AF tuning. `smoothingAlpha` is the EMA weight
+    // for the motor target: 0.05 = very smooth, 1.0 = instant tracking.
+    private var confidenceThreshold = DEFAULT_CONFIDENCE_THRESHOLD
+    private var smoothingAlpha = DEFAULT_SMOOTHING_ALPHA
+
+    fun setSmoothingAlpha(alpha: Float) {
+        smoothingAlpha = alpha.coerceIn(0.05f, 1.0f)
+    }
 
     // Focus tracking
     private var continuousFocusJob: Job? = null
@@ -325,17 +323,12 @@ class AutofocusController(
         return _state.value.targetMotorPosition
     }
 
-    /**
-     * Update configuration
-     */
     fun updateConfiguration(
         confidenceThreshold: Float? = null,
-        enableSmoothing: Boolean? = null,
-        responseSpeed: Int? = null
+        smoothingAlpha: Float? = null
     ) {
         confidenceThreshold?.let { this.confidenceThreshold = it }
-        enableSmoothing?.let { this.enableSmoothing = it }
-        responseSpeed?.let { this.responseSpeed = it.coerceIn(0, 100) }
+        smoothingAlpha?.let { this.smoothingAlpha = it.coerceIn(0.05f, 1.0f) }
     }
 
     // Private methods
@@ -506,13 +499,11 @@ class AutofocusController(
                 return
             }
 
-            // Apply smoothing with safe arithmetic
-            val finalPosition = if (enableSmoothing && lastMotorPosition != null) {
-                // Safe calculation to prevent overflow
+            val finalPosition = if (smoothingAlpha < 1.0f && lastMotorPosition != null) {
                 val lastPos = lastMotorPosition!!.toFloat()
                 val targetPos = targetPosition.toFloat()
-                val smoothed = (lastPos * (1f - FOCUS_SMOOTHING_FACTOR) +
-                        targetPos * FOCUS_SMOOTHING_FACTOR)
+                val smoothed = (lastPos * (1f - smoothingAlpha) +
+                        targetPos * smoothingAlpha)
 
                 // Ensure result is valid before converting to int
                 if (!smoothed.isFinite()) {

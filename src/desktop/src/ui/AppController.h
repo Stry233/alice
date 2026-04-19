@@ -6,6 +6,9 @@
 #include <QTimer>
 #include <QVariantList>
 #include <memory>
+#include <vector>
+
+#include "core/autofocus/SubjectTracker.h"
 
 namespace alice {
 
@@ -20,9 +23,12 @@ class SettingsManager;
 class SyncServer;
 
 /**
- * Central QML ↔ C++ bridge. Analogous to CameraViewModel in Android.
- * Orchestrates all hardware, autofocus, and network components.
- * Exposed to QML as the "alice" context property.
+ * Central QML ↔ C++ bridge.
+ *
+ * Owns every hardware manager (RealSense, motor, capture card), the
+ * autofocus pipeline, face detection, network sync, and settings
+ * persistence. Exposed to QML as the "alice" context property so
+ * every UI binding resolves through a single, well-defined surface.
  */
 class AppController : public QObject {
     Q_OBJECT
@@ -32,6 +38,24 @@ class AppController : public QObject {
     Q_PROPERTY(bool realSenseConnected READ realSenseConnected NOTIFY deviceStateChanged)
     Q_PROPERTY(bool captureCardConnected READ captureCardConnected NOTIFY deviceStateChanged)
     Q_PROPERTY(int motorPosition READ motorPosition NOTIFY motorPositionChanged)
+
+    // Device identity — populated from the hardware managers on connect so
+    // the popover UI can show actual model / bus names instead of hardcoded
+    // placeholders. Re-notified on every device state transition.
+    Q_PROPERTY(QString motorDeviceName READ motorDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString motorDeviceAddress READ motorDeviceAddress NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString realSenseDeviceName READ realSenseDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString realSenseDeviceAddress READ realSenseDeviceAddress NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString captureCardDeviceName READ captureCardDeviceName NOTIFY deviceStateChanged)
+    Q_PROPERTY(QString captureCardDeviceAddress READ captureCardDeviceAddress NOTIFY deviceStateChanged)
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    Q_PROPERTY(qint64 motorConnectedSinceMs READ motorConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 motorLastDisconnectMs READ motorLastDisconnectMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 realSenseConnectedSinceMs READ realSenseConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 realSenseLastDisconnectMs READ realSenseLastDisconnectMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 captureCardConnectedSinceMs READ captureCardConnectedSinceMs NOTIFY deviceStateChanged)
+    Q_PROPERTY(qint64 captureCardLastDisconnectMs READ captureCardLastDisconnectMs NOTIFY deviceStateChanged)
 
     // Depth
     Q_PROPERTY(float depth READ depth NOTIFY depthChanged)
@@ -46,6 +70,9 @@ class AppController : public QObject {
     Q_PROPERTY(bool hasMapping READ hasMapping NOTIFY autofocusStateChanged)
     Q_PROPERTY(int targetMotorPosition READ targetMotorPosition NOTIFY autofocusStateChanged)
     Q_PROPERTY(QString mappingName READ mappingName NOTIFY autofocusStateChanged)
+
+    // Face tracking (reactive binding for QML overlay)
+    Q_PROPERTY(QVariantList trackedFacesList READ trackedFaces NOTIFY trackedFacesChanged)
 
     // Network
     Q_PROPERTY(bool syncServerRunning READ syncServerRunning NOTIFY syncStateChanged)
@@ -73,6 +100,10 @@ class AppController : public QObject {
     Q_PROPERTY(QImage colorFrame READ colorFrame NOTIFY colorFrameChanged)
     Q_PROPERTY(QImage depthFrame READ depthFrame NOTIFY depthFrameChanged)
     Q_PROPERTY(QImage captureFrame READ captureFrame NOTIFY captureFrameChanged)
+    // Constant empty QImage so QML bindings that want to "clear" a renderer
+    // can fall back to a valid value instead of `null` (which produces the
+    // "Unable to assign null to QImage" warning).
+    Q_PROPERTY(QImage emptyFrame READ emptyFrame CONSTANT)
 
 public:
     explicit AppController(QObject *parent = nullptr);
@@ -86,6 +117,33 @@ public:
     bool realSenseConnected() const;
     bool captureCardConnected() const;
     int motorPosition() const;
+
+    qint64 motorConnectedSinceMs() const;
+    qint64 motorLastDisconnectMs() const;
+    qint64 realSenseConnectedSinceMs() const;
+    qint64 realSenseLastDisconnectMs() const;
+    qint64 captureCardConnectedSinceMs() const;
+    qint64 captureCardLastDisconnectMs() const;
+
+    QString motorDeviceName() const;
+    QString motorDeviceAddress() const;
+    QString realSenseDeviceName() const;
+    QString realSenseDeviceAddress() const;
+    QString captureCardDeviceName() const;
+    QString captureCardDeviceAddress() const;
+
+    // ── User-initiated device control ────────────────────────────────
+    Q_INVOKABLE void restartMotor();
+    Q_INVOKABLE void disconnectMotor();
+    Q_INVOKABLE void reconnectMotor();
+
+    Q_INVOKABLE void restartDepth();
+    Q_INVOKABLE void disconnectDepth();
+    Q_INVOKABLE void reconnectDepth();
+
+    Q_INVOKABLE void restartCam();
+    Q_INVOKABLE void disconnectCam();
+    Q_INVOKABLE void reconnectCam();
 
     // ── Depth ────────────────────────────────────────────────────────
     float depth() const;
@@ -102,11 +160,42 @@ public:
     bool hasMapping() const;
     int targetMotorPosition() const;
 
+    // ── Runtime-adjustable settings (persisted + synced) ────────────
+    Q_INVOKABLE void setAfConfidenceThreshold(float v);
+    Q_INVOKABLE void setAfSmoothingAlpha(float v);
+    Q_INVOKABLE void setMotorReversed(bool v);
+    Q_INVOKABLE void setMotorOffset(int v);
+    Q_INVOKABLE float afConfidenceThreshold() const;
+    Q_INVOKABLE float afSmoothingAlpha() const;
+    Q_INVOKABLE bool motorReversed() const;
+    Q_INVOKABLE int motorOffset() const;
+
+    // Depth sensor tuning
+    Q_INVOKABLE void setDepthMinDistance(int mm);
+    Q_INVOKABLE void setDepthMaxDistance(int mm);
+    Q_INVOKABLE void setDepthSmoothing(float r);
+    Q_INVOKABLE int depthMinDistance() const;
+    Q_INVOKABLE int depthMaxDistance() const;
+    Q_INVOKABLE float depthSmoothingValue() const;
+
+    // System
+    Q_INVOKABLE void resetAllSettings();
+
     QString mappingName() const;
     Q_INVOKABLE QVariantList mappingPoints() const;
     Q_INVOKABLE void loadMappingFromFile(const QString &path);
     Q_INVOKABLE void loadPreset(int presetIndex);
     Q_INVOKABLE void clearMapping();
+    /**
+     * Serialise the user-recorded calibration points to a JSON mapping
+     * file that loadMappingFromFile() can later consume. Accepts either a
+     * local path or a file:// URL (as produced by QML FileDialog).
+     * Returns false and logs if the path is empty, the points list is
+     * invalid, or the filesystem write fails.
+     */
+    Q_INVOKABLE bool saveMappingToFile(const QString &pathOrUrl,
+                                       const QVariantList &points,
+                                       const QString &name = QStringLiteral("Calibration"));
 
     // ── Motor control ────────────────────────────────────────────────
     Q_INVOKABLE void setMotorPosition(int position);
@@ -115,11 +204,23 @@ public:
 
     // ── Depth measurement ────────────────────────────────────────────
     Q_INVOKABLE void setMeasurementPosition(float x, float y);
+    /**
+     * Press/tap variant of setMeasurementPosition: forces the depth
+     * estimator to discard any context from the old crosshair position.
+     * Call from QML mouse-press / tap handlers; keep setMeasurementPosition
+     * for drag events where some smoothing across frames is desirable.
+     */
+    Q_INVOKABLE void jumpToMeasurementPosition(float x, float y);
     Q_INVOKABLE void processTap(float x, float y);
 
     // ── Face tracking ────────────────────────────────────────────────
     Q_INVOKABLE void selectFace(int trackingId);
     Q_INVOKABLE QVariantList trackedFaces() const;
+    // Resolution of the frame the last detection ran against (for QML to
+    // map pixel-space bboxes into preview coordinates). Returns 0,0 until
+    // the first color frame arrives.
+    Q_INVOKABLE int faceFrameWidth() const { return faceFrameWidth_; }
+    Q_INVOKABLE int faceFrameHeight() const { return faceFrameHeight_; }
 
     // ── Resolution / transmission quality ─────────────────────────────
     QVariantList realSenseDepthModes() const;
@@ -152,10 +253,17 @@ public:
     QImage colorFrame() const { return colorFrame_; }
     QImage depthFrame() const { return depthFrame_; }
     QImage captureFrame() const { return captureFrame_; }
+    QImage emptyFrame() const { return QImage(); }
 
     // ── UI state ─────────────────────────────────────────────────────
     bool showDepthOverlay() const { return showDepthOverlay_; }
-    void setShowDepthOverlay(bool v) { if (showDepthOverlay_ != v) { showDepthOverlay_ = v; emit showDepthOverlayChanged(); } }
+    void setShowDepthOverlay(bool v) {
+        if (showDepthOverlay_ != v) {
+            showDepthOverlay_ = v;
+            updateDepthColormapGate();
+            emit showDepthOverlayChanged();
+        }
+    }
 
 signals:
     void showDepthOverlayChanged();
@@ -170,6 +278,7 @@ signals:
     void depthFrameChanged();
     void captureFrameChanged();
     void txSettingsChanged();
+    void trackedFacesChanged();
 
 private slots:
     void onDepthChanged(float depth, float confidence);
@@ -185,6 +294,16 @@ private:
     void notifyRemoteDeviceStates();
     void broadcastModeChange();
     void broadcastCurrentMapping();
+    void broadcastTrackedFaces();
+    void broadcastSettings();
+    void updateDepthColormapGate();
+
+    // Calibration mapping persistence. Studio caches the currently-loaded
+    // mapping so it auto-restores on the next launch — whether it came
+    // from a local file, a preset, or a remote sync push.
+    static QString mappingCachePath();
+    void saveMappingCache();
+    void loadMappingCache();
 
     // Core components
     std::unique_ptr<RealSenseManager> realsense_;
@@ -214,6 +333,54 @@ private:
     float currentDepth_ = 0.0f;
     float currentConfidence_ = 0.0f;
 
+    // Last slider value posted for "Depth Smoothing". The slider ranges
+    // 10-500 (historical Kalman-R scale); AppController::setDepthSmoothing
+    // maps that to the DepthEstimator's EMA alpha internally. Cached here
+    // so the UI slider shows the user-facing value, not the alpha.
+    float depthSmoothingSliderValue_ = 100.0f;
+
+    // Cached tracked faces from the most recent detection pass (also pushed
+    // to the sync peer for cross-device overlay).
+    std::vector<TrackedFace> lastTrackedFaces_;
+    int faceFrameWidth_ = 0;
+    int faceFrameHeight_ = 0;
+    qint64 lastFaceBroadcastMs_ = 0;
+    // Throttle the full AF-F pipeline (ONNX inference + SubjectTracker
+    // histograms + per-face depth sampling + primary selection + QML
+    // overlay rebuild) to 10 Hz. Everything inside onColorFrame runs on
+    // the UI thread; at the 30 Hz color-stream rate the chain saturates
+    // one core and starves the QML compositor, which stops painting the
+    // capture-card preview — the user sees < 1 FPS on the main monitor
+    // with aggregate CPU looking "fine" on a multi-core box.
+    //
+    // 10 Hz is the documented industry-standard rate for cinema face
+    // tracking (ARRI HI-5, Preston LR3) — a face doesn't move
+    // meaningfully in 100 ms, and the intermediate frames still publish
+    // colorFrameChanged so the live preview stays smooth.
+    static constexpr qint64 kFaceDetectIntervalMs = 100; // 10 Hz
+    qint64 lastFaceDetectMs_ = 0;
+    // Auto-selected primary face id for hysteresis handoff. An incoming
+    // detection only steals the "primary" slot from the currently-tracked
+    // face if it decisively wins on one of two criteria:
+    //
+    //   kPrimaryHysteresis: score-based fallback path. The challenger's
+    //       tracker score must beat the incumbent's by at least 15 %.
+    //       Below that we keep the current face selected so tiny score
+    //       fluctuations from the detector don't flicker the focus target
+    //       between two faces of similar size/confidence.
+    //
+    //   kDepthHysteresis: depth-based primary pick. The challenger must be
+    //       at least 10 % closer to the camera than the incumbent (i.e.
+    //       current_depth > challenger_depth * 1.10). This prevents
+    //       oscillation when two faces stand at near-identical distances
+    //       and normal depth noise would otherwise swap them every frame.
+    //
+    // Both multipliers are >1.0 by design; 1.0 would mean "any improvement
+    // wins", which produces visible jitter in real footage.
+    int lastPrimaryId_ = -1;
+    static constexpr float kPrimaryHysteresis = 1.15f;
+    static constexpr float kDepthHysteresis   = 1.10f;
+
     // UI state
     bool showDepthOverlay_ = false;
 
@@ -222,10 +389,12 @@ private:
     bool streamDepth_ = false;
     bool streamCapture_ = false;
 
-    // Configurable JPEG quality (0-100)
-    int streamQualityDepth_ = 85;
-    int streamQualityColor_ = 85;
-    int streamQualityCapture_ = 80;
+    // Configurable JPEG quality (0-100). See SettingsManager::txQuality*()
+    // for the rationale: capture card is high priority for monitoring and
+    // defaults to 92; depth / RS color are small overlays and default to 70.
+    int streamQualityDepth_ = 70;
+    int streamQualityColor_ = 70;
+    int streamQualityCapture_ = 92;
 
     // Frame type constants
     static constexpr uint8_t kFrameTypeColor = 0x01;
@@ -238,10 +407,45 @@ private:
     int64_t lastCaptureSendMs_ = 0;
     int64_t minFrameIntervalMs_ = 33; // ~30fps max per stream
 
-    // Busy flag to skip frames while previous encode is in flight
-    std::atomic<bool> captureEncodeBusy_{false};
+    // Timestamp-based echo suppression. When we broadcast MODE_CHANGE or
+    // SETTINGS_SYNC, the Android client may echo them back after its own
+    // 200 ms suppression window. We ignore inbound messages of the same
+    // type for 500 ms after our last outbound broadcast.
+    int64_t lastModeBroadcastMs_ = 0;
+    int64_t lastSettingsBroadcastMs_ = 0;
+    static constexpr int64_t kSyncEchoSuppressMs = 500;
 
-    void sendFrameToClient(uint8_t frameType, const QImage &frame, int quality);
+    // Busy flags: skip frames while a previous encode for the same stream
+    // is still in flight, so we never pile up work on the thread pool.
+    std::atomic<bool> captureEncodeBusy_{false};
+    std::atomic<bool> depthEncodeBusy_{false};
+
+    void sendFrameToClient(uint8_t frameType, const QImage &frame,
+                           int quality, int maxW, int maxH);
+    void sendFrameToClientAsync(uint8_t frameType, const QImage &frame,
+                                int quality, int maxW, int maxH,
+                                std::atomic<bool> &busyFlag);
+
+    // Shared serializer between the QML overlay and the wire broadcast.
+    QVariantMap serializeFaceEntry(const TrackedFace &face,
+                                   double invW, double invH,
+                                   int selectedId,
+                                   bool includeUIFields) const;
+
+    // Periodic "Sent N <label> frames" diagnostic — one implementation for
+    // all three video streams, so they can't drift out of sync with each
+    // other's format strings or log intervals.
+    void logStreamThrottled(int &counter, int every,
+                            const char *label, const QImage &frame);
+
+    // Per-stream sent-frame counters (used only for the throttled log).
+    // Kept as members instead of function-local statics so the counters
+    // reset naturally when AppController is recreated (e.g. tests).
+    int colorStreamCount_   = 0;
+    int depthStreamCount_   = 0;
+    int captureStreamCount_ = 0;
+    static constexpr int kStreamLogInterval  = 60;  // RealSense color/depth
+    static constexpr int kCaptureLogInterval = 30;  // main camera — half the spacing
 };
 
 } // namespace alice

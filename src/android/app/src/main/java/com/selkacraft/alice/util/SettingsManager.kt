@@ -2,9 +2,15 @@ package com.selkacraft.alice.util
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.selkacraft.alice.comm.autofocus.FocusMode
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 
 /**
  * Manages all application settings with reactive StateFlow-based API.
@@ -32,15 +38,18 @@ class SettingsManager(private val context: Context) {
     // Autofocus Settings
     // ====================
 
-    private val _autofocusEnabled = MutableStateFlow(
-        prefs.getBoolean(KEY_AUTOFOCUS_ENABLED, DEFAULT_AUTOFOCUS_ENABLED)
-    )
-    val autofocusEnabled: StateFlow<Boolean> = _autofocusEnabled.asStateFlow()
-
     private val _autofocusMode = MutableStateFlow(
         prefs.getString(KEY_AUTOFOCUS_MODE, DEFAULT_AUTOFOCUS_MODE) ?: DEFAULT_AUTOFOCUS_MODE
     )
     val autofocusMode: StateFlow<String> = _autofocusMode.asStateFlow()
+
+    // Derived: enabled = (mode != MANUAL). No separate toggle — switching
+    // away from MF enables AF, switching to MF disables it. Matches the
+    // desktop behaviour where there's no independent enable flag.
+    val autofocusEnabled: StateFlow<Boolean> = _autofocusMode
+        .map { it != FocusMode.MANUAL.name }
+        .stateIn(CoroutineScope(Dispatchers.Default), SharingStarted.Eagerly,
+                 _autofocusMode.value != FocusMode.MANUAL.name)
 
     private val _autofocusConfidenceThreshold = MutableStateFlow(
         prefs.getFloat(KEY_AUTOFOCUS_CONFIDENCE_THRESHOLD, DEFAULT_AUTOFOCUS_CONFIDENCE_THRESHOLD)
@@ -176,10 +185,15 @@ class SettingsManager(private val context: Context) {
     fun setCameraResolution(value: String) = updateString(KEY_CAMERA_RESOLUTION, value, _cameraResolution)
     fun setVideoFormat(value: String) = updateString(KEY_VIDEO_FORMAT, value, _videoFormat)
 
-    // Autofocus
+    // Autofocus — `enabled` is derived from mode, so setAutofocusEnabled
+    // just switches to/from MANUAL. Callers that need a specific AF mode
+    // should call setAutofocusMode directly.
     fun setAutofocusEnabled(value: Boolean) {
-        android.util.Log.d("SettingsManager", "setAutofocusEnabled($value), current=${_autofocusEnabled.value}")
-        updateBoolean(KEY_AUTOFOCUS_ENABLED, value, _autofocusEnabled)
+        if (!value) {
+            setAutofocusMode(FocusMode.MANUAL.name)
+        }
+        // true is a no-op: the caller should have already set a non-MANUAL
+        // mode, which makes autofocusEnabled flow emit true automatically.
     }
     fun setAutofocusMode(value: String) = updateString(KEY_AUTOFOCUS_MODE, value, _autofocusMode)
     fun setAutofocusConfidenceThreshold(value: Float) = updateFloat(KEY_AUTOFOCUS_CONFIDENCE_THRESHOLD, value, _autofocusConfidenceThreshold)

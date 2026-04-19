@@ -93,7 +93,7 @@ protected:
         p.drawText(QRect(0, barY - 16, w, 14), Qt::AlignHCenter, "Initializing...");
 
         // Version + copyright
-        p.drawText(QRect(w - 60, h - 28, 44, 14), Qt::AlignRight, "v0.1");
+        p.drawText(QRect(w - 60, h - 28, 44, 14), Qt::AlignRight, "v" ALICE_APP_VERSION);
         p.drawText(QRect(16, h - 28, 200, 14), Qt::AlignLeft, "\u00A9 2026 SelkaCraft");
     }
 

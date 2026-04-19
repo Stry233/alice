@@ -7,8 +7,7 @@ namespace keys {
     constexpr auto kAfEnabled    = "autofocus/enabled";
     constexpr auto kAfMode       = "autofocus/mode";
     constexpr auto kAfConfidence = "autofocus/confidenceThreshold";
-    constexpr auto kAfSmoothing  = "autofocus/smoothing";
-    constexpr auto kAfSpeed      = "autofocus/responseSpeed";
+    constexpr auto kAfSmoothingAlpha = "autofocus/smoothingAlpha";
 
     constexpr auto kMotorSpeed     = "motor/speed";
     constexpr auto kMotorReverse   = "motor/reverse";
@@ -60,11 +59,8 @@ void SettingsManager::setAutofocusMode(const QString &v) { settings_.setValue(ke
 float SettingsManager::confidenceThreshold() const { return settings_.value(keys::kAfConfidence, 0.7f).toFloat(); }
 void SettingsManager::setConfidenceThreshold(float v) { settings_.setValue(keys::kAfConfidence, v); emit confidenceThresholdChanged(); }
 
-bool SettingsManager::smoothingEnabled() const { return settings_.value(keys::kAfSmoothing, true).toBool(); }
-void SettingsManager::setSmoothingEnabled(bool v) { settings_.setValue(keys::kAfSmoothing, v); emit smoothingEnabledChanged(); }
-
-int SettingsManager::responseSpeed() const { return settings_.value(keys::kAfSpeed, 50).toInt(); }
-void SettingsManager::setResponseSpeed(int v) { settings_.setValue(keys::kAfSpeed, v); emit responseSpeedChanged(); }
+float SettingsManager::smoothingAlpha() const { return settings_.value(keys::kAfSmoothingAlpha, 0.4f).toFloat(); }
+void SettingsManager::setSmoothingAlpha(float v) { settings_.setValue(keys::kAfSmoothingAlpha, v); emit smoothingAlphaChanged(); }
 
 // ── Motor ────────────────────────────────────────────────────────────
 
@@ -134,10 +130,16 @@ void SettingsManager::setCaptureResolution(int w, int h, int fps) {
 }
 
 // ── Transmission quality ─────────────────────────────────────────────
-
-int SettingsManager::txQualityDepth() const { return settings_.value(keys::kTxQualityDepth, 85).toInt(); }
+//
+// Capture card is the main monitoring feed on the Android client so it
+// keeps a high-quality default (92 ≈ visually near-lossless on natural
+// content). Depth colormap and RealSense RGB are small overlays and get an
+// aggressive 70 default — at 640×480 the artefacts are imperceptible but
+// the bandwidth savings are substantial, leaving headroom for the capture
+// stream.
+int SettingsManager::txQualityDepth() const { return settings_.value(keys::kTxQualityDepth, 70).toInt(); }
 void SettingsManager::setTxQualityDepth(int v) { settings_.setValue(keys::kTxQualityDepth, v); }
-int SettingsManager::txQualityCapture() const { return settings_.value(keys::kTxQualityCapture, 80).toInt(); }
+int SettingsManager::txQualityCapture() const { return settings_.value(keys::kTxQualityCapture, 92).toInt(); }
 void SettingsManager::setTxQualityCapture(int v) { settings_.setValue(keys::kTxQualityCapture, v); }
 int SettingsManager::txMaxFps() const { return settings_.value(keys::kTxMaxFps, 30).toInt(); }
 void SettingsManager::setTxMaxFps(int v) { settings_.setValue(keys::kTxMaxFps, v); }
@@ -152,8 +154,7 @@ void SettingsManager::setMotorLastPosition(int v) { settings_.setValue(keys::kMo
 void SettingsManager::resetAutofocusSettings() {
     settings_.remove("autofocus");
     emit autofocusEnabledChanged(); emit autofocusModeChanged();
-    emit confidenceThresholdChanged(); emit smoothingEnabledChanged();
-    emit responseSpeedChanged();
+    emit confidenceThresholdChanged(); emit smoothingAlphaChanged();
 }
 
 void SettingsManager::resetMotorSettings() {

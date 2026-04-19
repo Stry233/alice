@@ -11,21 +11,27 @@
 #include <atomic>
 #include <thread>
 
-#include "core/realsense/KalmanFilter.h"
-#include "core/realsense/BilateralFilter.h"
+#include "core/realsense/DepthEstimator.h"
 
 namespace alice {
 
 /**
  * RealSense depth camera manager.
- * Wraps librealsense2 for depth/color streaming with ROI-based depth calculation.
- * Ported from RealSenseManager.kt + RealSenseDepthCalculator.kt.
+ *
+ * Wraps librealsense2 for depth/color streaming with robust single-point
+ * depth estimation. Runs the capture loop on a detachable std::thread so
+ * a device yank never blocks the Qt event loop. Depth is processed by
+ * DepthEstimator (ROI median + confidence-weighted EMA with discontinuity
+ * detection); colour frames are aligned to depth and cached for
+ * face-detection consumers.
  */
 class RealSenseManager : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(float depth READ currentDepth NOTIFY depthChanged)
     Q_PROPERTY(float confidence READ currentConfidence NOTIFY depthChanged)
+    Q_PROPERTY(qint64 connectedSinceMs READ connectedSinceMs NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 lastDisconnectMs READ lastDisconnectMs NOTIFY connectionChanged)
 
 public:
     explicit RealSenseManager(QObject *parent = nullptr);
@@ -34,21 +40,61 @@ public:
     bool isConnected() const { return connected_; }
     float currentDepth() const { return depth_; }
     float currentConfidence() const { return confidence_; }
+    qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
+    qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
+    /** Lock-free read of the current measurement X (normalised 0..1). */
+    float measureX() const { return measureXCached_.load(std::memory_order_relaxed); }
+    /** Lock-free read of the current measurement Y (normalised 0..1). */
+    float measureY() const { return measureYCached_.load(std::memory_order_relaxed); }
+    /** Human-readable model name from RS2_CAMERA_INFO_NAME (e.g. "Intel RealSense D455"). */
+    QString deviceName() const { QMutexLocker l(&deviceInfoMutex_); return deviceName_; }
+    /** Bus identifier (typically "USB 3.x") for the attached camera. */
+    QString deviceBus() const { QMutexLocker l(&deviceInfoMutex_); return deviceBus_; }
 
     void setMeasurementPosition(float x, float y);
     void getMeasurementPosition(float &x, float &y) const;
+
+    /**
+     * Treat the upcoming measurement as a teleport to a new target:
+     * clear the depth estimator's temporal state so the next reading is
+     * taken without any blending from the old position. Called by the UI
+     * on mouse-press / tap events. Drag events keep using
+     * setMeasurementPosition alone — the auto per-frame delta check still
+     * covers big single-frame jumps, and the filter intentionally carries
+     * some context across small drifts.
+     */
+    void jumpToPosition(float x, float y);
+
+    /**
+     * Sample the depth (in meters) at a point in the color frame.
+     * @param nx Normalised X in [0, 1] (color-frame coordinates)
+     * @param ny Normalised Y in [0, 1]
+     * @return Depth in meters, or 0 if no valid data at the point.
+     *
+     * Reads from the last captured depth frame (already aligned to color),
+     * sampling a small neighbourhood and returning the median of valid
+     * depths to suppress holes. Thread-safe — callable from any thread.
+     */
+    float depthAt(float nx, float ny) const;
+
+    // Enable/disable generation of the colorized depth visualisation.
+    // When disabled, captureLoop skips the expensive colorizeDepth() call
+    // entirely. Safe to call from any thread.
+    void setColormapEnabled(bool enabled) { colormapEnabled_ = enabled; }
+    bool isColormapEnabled() const { return colormapEnabled_.load(); }
 
     // Configuration
     void setStreamConfig(int depthW, int depthH, int depthFps, int colorW, int colorH, int colorFps);
     QVariantList availableDepthModes() const;
     QVariantList availableColorModes() const;
 
-    static constexpr int kMinRoiSize = 8;
-    static constexpr int kMaxRoiSize = 24;
-    static constexpr int kDefaultRoiSize = 16;
+    static constexpr int kDefaultMinValidDepth = 200;
+    static constexpr int kDefaultMaxValidDepth = 10000;
 
-    static constexpr int kMinValidDepth = 200;
-    static constexpr int kMaxValidDepth = 10000;
+    void setMinValidDepth(int mm);
+    void setMaxValidDepth(int mm);
+    void setDepthSmoothing(float alpha);
+    float depthSmoothing() const { return estimator_.smoothing(); }
 
 public slots:
     void start();
@@ -66,7 +112,6 @@ private slots:
 
 private:
     void captureLoop();
-    float calculateDepth(const uint16_t *depthData, int width, int height);
     QImage colorizeDepth(const uint16_t *depthData, int width, int height);
 
     // Threading — uses std::thread (not QThread) so it can be detached
@@ -75,17 +120,49 @@ private:
     std::atomic<bool> running_{false};
     std::atomic<bool> connected_{false};
 
-    // Depth processing
-    KalmanFilter kalmanFilter_;
-    BilateralFilter bilateralFilter_;
+    // Depth processing: single-point estimator (ROI median + EMA with
+    // discontinuity detection). Owned by the capture thread; parameter
+    // setters from the UI thread use estimatorParamsMutex_.
+    DepthEstimator estimator_;
+    mutable QMutex estimatorParamsMutex_;
     mutable QMutex positionMutex_;
     float measureX_ = 0.5f;
     float measureY_ = 0.5f;
-    int roiSize_ = kDefaultRoiSize;
+
+    int minValidDepth_ = kDefaultMinValidDepth;
+    int maxValidDepth_ = kDefaultMaxValidDepth;
+    // Lock-free mirrors of measureX_/measureY_ for QML binding reads at
+    // ~60 Hz. Written under positionMutex_ in setMeasurementPosition and
+    // read atomically from the UI thread to avoid taking the mutex from
+    // two separate property getters per paint (measureX() and measureY()).
+    std::atomic<float> measureXCached_{0.5f};
+    std::atomic<float> measureYCached_{0.5f};
 
     // Current state
     std::atomic<float> depth_{0.0f};
     std::atomic<float> confidence_{0.0f};
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    std::atomic<qint64> connectedSinceMs_{0};
+    std::atomic<qint64> lastDisconnectMs_{0};
+
+    // Visual colormap is expensive — only generate when something will
+    // actually consume the result (depth overlay visible or sync stream on).
+    std::atomic<bool> colormapEnabled_{false};
+
+    // Cache of the most recent color-aligned depth frame so that consumers
+    // (face tracker, per-eye depth sampling) can query depths away from
+    // the crosshair without waiting for the capture thread.
+    mutable QMutex depthCacheMutex_;
+    std::vector<uint16_t> depthCache_;
+    int depthCacheW_ = 0;
+    int depthCacheH_ = 0;
+
+    // Device identity read from RS2_CAMERA_INFO_NAME when the pipeline starts.
+    // Protected by its own mutex so UI threads can read it safely.
+    mutable QMutex deviceInfoMutex_;
+    QString deviceName_;
+    QString deviceBus_;
 
     // Frame timeout watchdog (main thread timer)
     QTimer frameTimeoutTimer_;

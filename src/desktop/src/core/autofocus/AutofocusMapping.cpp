@@ -52,16 +52,24 @@ std::optional<int> AutofocusMapping::getMotorPosition(float depth) const {
     std::sort(sorted.begin(), sorted.end(),
               [](const MappingPoint &a, const MappingPoint &b) { return a.depth < b.depth; });
 
-    // Clamp to endpoints
     if (depth <= sorted.front().depth) return sorted.front().motorPosition;
     if (depth >= sorted.back().depth)  return sorted.back().motorPosition;
 
-    // Find surrounding points for linear interpolation
+    // Find surrounding points for linear interpolation. `validate()` rejects
+    // duplicate depths, but it's caller-optional — a mapping loaded from a
+    // malformed JSON file or mutated after the fact could still arrive here
+    // with consecutive points at the same depth. Guard the divisor so we
+    // never divide by (near-)zero; fall back to the low endpoint instead.
+    static constexpr float kDepthSpanEpsilon = 1e-6f;
     for (size_t i = 0; i + 1 < sorted.size(); ++i) {
         if (depth >= sorted[i].depth && depth <= sorted[i + 1].depth) {
             const auto &lo = sorted[i];
             const auto &hi = sorted[i + 1];
-            float ratio = (depth - lo.depth) / (hi.depth - lo.depth);
+            const float span = hi.depth - lo.depth;
+            if (span <= kDepthSpanEpsilon) {
+                return std::clamp(lo.motorPosition, 0, 4095);
+            }
+            const float ratio = (depth - lo.depth) / span;
             int pos = lo.motorPosition
                     + static_cast<int>(ratio * (hi.motorPosition - lo.motorPosition));
             return std::clamp(pos, 0, 4095);

@@ -6,7 +6,10 @@ import kotlinx.serialization.json.Json
 
 /**
  * Network sync protocol message types and serialization.
- * Matches the desktop C++ implementation for bidirectional sync.
+ *
+ * All messages are JSON-encoded text frames over the WebSocket.
+ * Binary frames carry video data: a 1-byte frame-type tag followed
+ * by a 4-byte timestamp and the JPEG/WebP payload.
  */
 
 private val json = Json {
@@ -123,6 +126,14 @@ data class SyncMessage(
                 put("deviceInfo", deviceInfo)
             }
             return SyncMessage(type = "HEARTBEAT", payload = payloadMap)
+        }
+
+        fun measurePosition(x: Float, y: Float): SyncMessage {
+            val payloadMap = buildJsonMap {
+                put("x", x)
+                put("y", y)
+            }
+            return SyncMessage(type = "MEASURE_POSITION", payload = payloadMap)
         }
     }
 }

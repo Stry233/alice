@@ -75,17 +75,30 @@ Item {
                             Row {
                                 spacing: Theme.dp(6)
                                 Text {
+                                    id: wideDepthText
                                     text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
                                     font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
                                     color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                                    Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
                                 }
                                 Text {
                                     id: wideConfText
                                     visible: alice ? alice.depth > 0 : false
+                                    // Reserve a fixed 4-char ("100%") slot so the
+                                    // "99%"→"100%" transition doesn't widen the row and
+                                    // push the green depth number left.
+                                    horizontalAlignment: Text.AlignRight
+                                    width: wideConfMetrics.advanceWidth
                                     text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
                                     font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
                                     color: Theme.textSecondary
-                                    anchors.baseline: parent.children[0].baseline
+                                    anchors.baseline: wideDepthText.baseline
+                                    TextMetrics {
+                                        id: wideConfMetrics
+                                        font.family: Theme.fontFamilyMono
+                                        font.pixelSize: Theme.dp(18)
+                                        text: "100%"
+                                    }
                                 }
                             }
                         }
@@ -105,41 +118,111 @@ Item {
                                 property real vidX: (width - fitW) / 2
                                 property real vidY: (height - fitH) / 2
 
+                                // Fade + scale enter/exit matching Android CameraPreview.kt:
+                                //   in  — 350ms fade + scale 0.95 → 1.0 OutCubic
+                                //   out — 350ms fade + scale 1.0 → 0.95 OutCubic
+                                //
+                                // Runs via OpacityAnimator / ScaleAnimator which
+                                // execute on the scene graph's render thread rather
+                                // than the main GUI thread, so the animation stays
+                                // smooth even while the backend is mid-burst handling
+                                // the camera-connect signal, logging, and sync
+                                // broadcasts. `visible` is held true unconditionally
+                                // because Animators write to the scene graph opacity
+                                // node directly, which means the QML `opacity`
+                                // property jumps to its target immediately — a
+                                // `visible: opacity > 0.01` guard would therefore hide
+                                // the item before the render-thread fade could play.
                                 VideoRenderer {
+                                    id: wideRsFeed
                                     x: wideDepthRect.vidX; y: wideDepthRect.vidY
                                     width: wideDepthRect.fitW; height: wideDepthRect.fitH
-                                    source: alice ? alice.colorFrame : null
-                                    visible: alice ? alice.realSenseConnected : false
+                                    source: alice.colorFrame
+                                    property bool hasFeed: alice ? alice.realSenseConnected : false
+                                    visible: true
+                                    opacity: hasFeed ? 1.0 : 0.0
+                                    scale: hasFeed ? 1.0 : 0.95
+                                    transformOrigin: Item.Center
+                                    Behavior on opacity { OpacityAnimator { duration: 350; easing.type: Easing.OutCubic } }
+                                    Behavior on scale { ScaleAnimator { duration: 350; easing.type: Easing.OutCubic } }
                                 }
 
-                                // Double-stroke reticle
+                                // Face overlay — the detector runs on the RealSense color
+                                // feed, so this is the only place where the bboxes are
+                                // in-register with what the user sees.
+                                FaceOverlay {
+                                    anchors.fill: parent
+                                    vidX: wideDepthRect.vidX
+                                    vidY: wideDepthRect.vidY
+                                    vidW: wideDepthRect.fitW
+                                    vidH: wideDepthRect.fitH
+                                    faces: alice ? alice.trackedFacesList : []
+                                    visible: alice ? (alice.focusMode === 3 && alice.realSenseConnected) : false
+                                    onFaceClicked: (tid) => { if (alice) alice.selectFace(tid) }
+                                }
+
+                                // Double-stroke reticle. Hidden in AF-F mode —
+                                // the face tracker retargets the measurement
+                                // point automatically, so the manual crosshair
+                                // would just fight with it.
+                                //
+                                // Motion: translates to a new (cx, cy) over
+                                // 150ms OutCubic. When the normalized target
+                                // changes, the center ring briefly scales down
+                                // to ~0.75× (rack-focus feel) then snaps back
+                                // with a slight overshoot to confirm lock.
                                 Item {
+                                    id: wideReticle
                                     property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
                                     property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
                                     property real cx: wideDepthRect.vidX + normX * wideDepthRect.fitW
                                     property real cy: wideDepthRect.vidY + normY * wideDepthRect.fitH
                                     x: cx - 12; y: cy - 12
-                                    width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+                                    width: 24; height: 24
+                                    visible: alice ? (alice.realSenseConnected && alice.focusMode !== 3) : false
+
+                                    Behavior on x { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                                    Behavior on y { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+
+                                    onNormXChanged: wideLockPulse.restart()
+                                    onNormYChanged: wideLockPulse.restart()
 
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 22; height: 1; color: "#ffffff" }
                                     Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 22; color: "#ffffff" }
-                                    Rectangle { anchors.centerIn: parent; width: 8; height: 8; radius: 4; color: "transparent"; border.width: 1.5; border.color: "#ffffff" }
+                                    Rectangle { id: wideInnerRing; anchors.centerIn: parent; width: 8; height: 8; radius: 4; color: "transparent"; border.width: 1.5; border.color: "#ffffff"; transformOrigin: Item.Center }
                                     Rectangle { anchors.centerIn: parent; width: 10; height: 10; radius: 5; color: "transparent"; border.width: 1; border.color: "#000000"; opacity: 0.5 }
+
+                                    SequentialAnimation {
+                                        id: wideLockPulse
+                                        NumberAnimation { target: wideInnerRing; property: "scale"; to: 0.75; duration: Theme.durationFast; easing.type: Easing.OutCubic }
+                                        NumberAnimation { target: wideInnerRing; property: "scale"; to: 1.0; duration: Theme.durationNormal; easing.type: Easing.OutBack }
+                                    }
                                 }
 
                                 MouseArea {
-                                    anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                    anchors.fill: parent
+                                    enabled: alice ? alice.focusMode !== 3 : true  // no manual tap in AF-F
+                                    cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                     property bool isDragging: false
-                                    onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
-                                    onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                    // Press = full tap: teleport the measurement, reset the
+                                    // depth estimator, AND update the autofocus focus point
+                                    // (processTap). AF-C gates depth updates on proximity to
+                                    // the focus point — without this call focusX_/Y_ stay at
+                                    // the previous value and AF-C silently rejects new depth.
+                                    // Drag = soft position update only; keeps focus pinned
+                                    // to the original tap point so dragging to inspect depth
+                                    // elsewhere doesn't hijack AF-C's target.
+                                    onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
+                                    onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
                                     onReleased: isDragging = false
-                                    function updatePos(mx, my) {
+                                    function updatePos(mx, my, isJump) {
                                         if (!alice) return
                                         var nx = Math.max(0, Math.min(1, (mx - wideDepthRect.vidX) / wideDepthRect.fitW))
                                         var ny = Math.max(0, Math.min(1, (my - wideDepthRect.vidY) / wideDepthRect.fitH))
-                                        alice.setMeasurementPosition(nx, ny)
+                                        if (isJump) alice.processTap(nx, ny)
+                                        else alice.setMeasurementPosition(nx, ny)
                                     }
                                 }
                             }
@@ -239,47 +322,78 @@ Item {
                         VideoRenderer {
                             id: cameraFeed
                             anchors.fill: parent
-                            source: alice ? alice.captureFrame : null
-                            visible: alice ? alice.captureCardConnected : false
+                            source: alice.captureFrame
+                            property bool hasFeed: alice ? alice.captureCardConnected : false
+                            visible: true
+                            opacity: hasFeed ? 1.0 : 0.0
+                            scale: hasFeed ? 1.0 : 0.95
+                            transformOrigin: Item.Center
+                            Behavior on opacity { OpacityAnimator { duration: 350; easing.type: Easing.OutCubic } }
+                            Behavior on scale { ScaleAnimator { duration: 350; easing.type: Easing.OutCubic } }
                         }
 
-                        // Placeholder
+                        // Placeholder — fades in the opposite direction via an
+                        // OpacityAnimator so it also stays smooth while the main
+                        // thread is busy with the capture-card signal burst.
                         Label {
+                            id: cameraPlaceholder
                             anchors.centerIn: parent; text: "No camera"; font.pixelSize: Theme.fontSizeH2; color: Theme.textPlaceholder
-                            visible: alice ? !alice.captureCardConnected : true
-                        }
-
-                        // Face overlay
-                        FaceOverlay {
-                            anchors.fill: parent
-                            faces: alice ? alice.trackedFaces() : []
-                            showCrosshair: false
-                            visible: alice ? alice.focusMode === 3 : false
+                            property bool hasFeed: alice ? alice.captureCardConnected : false
+                            visible: true
+                            opacity: hasFeed ? 0.0 : 1.0
+                            Behavior on opacity { OpacityAnimator { duration: 250; easing.type: Easing.OutCubic } }
                         }
                     }
 
-                    // AF status chip (top-left) — matches HTML padding:2px 8px at 200%
+                    // AF status chip (top-left) — matches HTML padding:2px 8px at 200%.
+                    // Colour / border lerp between idle → focusing so the status
+                    // transition doesn't pop. `visible` is gated by opacity so
+                    // the chip fades out when the user drops back to MF instead
+                    // of snapping off-screen.
                     Rectangle {
+                        id: afChip
+                        property bool showChip: alice ? alice.focusMode > 0 : false
                         anchors.top: parent.top; anchors.left: parent.left; anchors.margins: Theme.dp(12)
                         width: afLabel.implicitWidth + Theme.dp(32); height: Theme.dp(32); radius: Theme.radiusSm
                         color: alice && alice.activelyFocusing ? Qt.rgba(0.055, 0.231, 0.173, 0.9) : Qt.rgba(0.106, 0.125, 0.145, 0.9)
                         border.width: 1; border.color: alice && alice.activelyFocusing ? Theme.success : Theme.border
-                        visible: alice ? alice.focusMode > 0 : false
+                        visible: opacity > 0.01
+                        opacity: showChip ? 1.0 : 0.0
+                        scale: showChip ? 1.0 : 0.92
+                        transformOrigin: Item.TopLeft
+                        Behavior on opacity { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                        Behavior on scale { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                        Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                        Behavior on border.color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                        Behavior on width { NumberAnimation { duration: Theme.durationFast; easing.type: Easing.OutCubic } }
                         Text {
                             id: afLabel; anchors.centerIn: parent
-                            text: ["", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
+                            // Keep the last non-MF label while the chip fades out so
+                            // the user sees "AF-S" dissolving, not an empty pill.
+                            property string lastLabel: "AF-S"
+                            text: {
+                                var m = alice ? alice.focusMode : 0
+                                if (m > 0) {
+                                    lastLabel = ["", "AF-S", "AF-C", "AF-F"][m]
+                                    return lastLabel
+                                }
+                                return lastLabel
+                            }
                             font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold
                             color: alice && alice.activelyFocusing ? Theme.success : Theme.textSecondary
+                            Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
                         }
                     }
 
-                    // Histogram overlay (top-right)
+                    // Histogram overlay (top-right) — tied strictly to the capture card
+                    // so that disconnecting the camera clears (hides) the histogram
+                    // instead of silently falling back to the RealSense color feed.
                     Rectangle {
                         anchors.top: parent.top; anchors.right: parent.right; anchors.margins: Theme.dp(8)
                         width: Theme.dp(220); height: Theme.dp(130); radius: Theme.radiusSm
                         color: Qt.rgba(0.106, 0.125, 0.145, 0.92)
                         border.width: 1; border.color: Theme.border
-                        visible: histRenderer.source !== null
+                        visible: alice ? alice.captureCardConnected : false
 
                         Text {
                             id: histTitle
@@ -293,7 +407,11 @@ Item {
                             anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
                             anchors.top: histTitle.bottom
                             anchors.margins: Theme.dp(6); anchors.topMargin: Theme.dp(4)
-                            source: alice ? (alice.captureCardConnected ? alice.captureFrame : alice.colorFrame) : null
+                            // Fall back to alice.emptyFrame (a default-constructed QImage)
+                            // instead of null so the binding always assigns a valid
+                            // QImage — null triggered a QML warning even though the
+                            // enclosing rectangle is hidden when disconnected.
+                            source: alice.captureCardConnected ? alice.captureFrame : alice.emptyFrame
                         }
                     }
 
@@ -375,18 +493,29 @@ Item {
         BottomStrip { Layout.fillWidth: true }
     }
 
-    // Compact mode right sidebar (1024-1279px): motor + numeric depth only
+    // Compact mode right sidebar (1200–1279px): motor + numeric depth +
+    // system monitor + scrolling log. The previous layout had an almost-empty
+    // focus-mode indicator panel that wasted vertical real estate; we now
+    // use that space for CPU/GPU/MEM bars and the log tail, mirroring the
+    // wide-mode sidebar at a smaller density.
     Component {
         id: compactRightComponent
 
         ColumnLayout {
             spacing: 0
 
-            // Motor
+            // Motor — dp(40) of vertical padding (dp(20) top + dp(20) bottom)
+            // so the slider handle has breathing room at small window heights.
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: cmpMotorCol.implicitHeight + 20; color: Theme.bg
+                Layout.fillWidth: true
+                Layout.preferredHeight: cmpMotorCol.implicitHeight + Theme.dp(40)
+                Layout.maximumHeight: cmpMotorCol.implicitHeight + Theme.dp(40)
+                color: Theme.bg
                 ColumnLayout {
-                    id: cmpMotorCol; anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                    id: cmpMotorCol; anchors.fill: parent
+                    anchors.leftMargin: Theme.dp(20); anchors.rightMargin: Theme.dp(20)
+                    anchors.topMargin: Theme.dp(20); anchors.bottomMargin: Theme.dp(20)
+                    spacing: Theme.dp(10)
                     SectionHeader { text: "MOTOR POSITION" }
                     MotorSlider {
                         Layout.fillWidth: true; motorPos: alice ? alice.motorPosition : 0
@@ -397,20 +526,43 @@ Item {
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-            // Depth numeric readout (no video feed)
+            // Depth numeric readout (no video feed). Shows current depth, confidence,
+            // and the active focus mode/AF state so the user doesn't need a dedicated
+            // focus-mode panel further down.
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: cmpDepthCol.implicitHeight + 20; color: Theme.bg
+                Layout.fillWidth: true
+                Layout.preferredHeight: cmpDepthCol.implicitHeight + Theme.dp(40)
+                Layout.maximumHeight: cmpDepthCol.implicitHeight + Theme.dp(40)
+                color: Theme.bg
                 ColumnLayout {
-                    id: cmpDepthCol; anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
-                    SectionHeader { text: "DEPTH" }
+                    id: cmpDepthCol; anchors.fill: parent
+                    anchors.leftMargin: Theme.dp(20); anchors.rightMargin: Theme.dp(20)
+                    anchors.topMargin: Theme.dp(20); anchors.bottomMargin: Theme.dp(20)
+                    spacing: Theme.dp(8)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        SectionHeader { text: "DEPTH"; Layout.fillWidth: true }
+                        Text {
+                            text: alice && alice.activelyFocusing ? ["MF", "AF-S", "AF-C", "AF-F"][alice.focusMode] : ["MF", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
+                            font.family: Theme.fontFamilyMono
+                            font.pixelSize: Theme.fontSizeMicro
+                            font.weight: Font.DemiBold
+                            color: alice && alice.activelyFocusing ? Theme.success : Theme.textSecondary
+                            Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                        }
+                    }
                     Text {
-                        text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + " m" : "—"
+                        text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + " m" : "\u2014"
                         font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(36); font.weight: Font.Bold
                         color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
                         Layout.alignment: Qt.AlignHCenter
+                        Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
                     }
                     Text {
-                        text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "% confidence"
+                        // Space-pad to 3 digits so this label stops the whole
+                        // panel from reflowing when confidence flickers across
+                        // the 100/99 boundary.
+                        text: String(Math.round((alice ? alice.depthConfidence : 0) * 100)).padStart(3, "\u00A0") + "% confidence"
                         font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); color: Theme.textSecondary
                         Layout.alignment: Qt.AlignHCenter
                     }
@@ -418,18 +570,27 @@ Item {
             }
             Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-            // Focus mode indicator
+            // System monitor — fits in sidebarNarrow width, shows CPU/GPU/MEM bars.
             Rectangle {
-                Layout.fillWidth: true; Layout.preferredHeight: 40; color: Theme.bg
-                Text {
-                    anchors.centerIn: parent
-                    text: alice && alice.activelyFocusing ? ["MF", "AF-S", "AF-C", "AF-F"][alice.focusMode] : ["MF", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
-                    font.family: Theme.fontFamilyMono; font.pixelSize: 13; font.weight: Font.DemiBold
-                    color: alice && alice.activelyFocusing ? Theme.success : Theme.textPrimary
+                Layout.fillWidth: true
+                Layout.preferredHeight: Theme.dp(160)
+                Layout.maximumHeight: Theme.dp(180)
+                color: Theme.bg
+                SystemMonitorPanel {
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.dp(20); anchors.rightMargin: Theme.dp(20)
+                    anchors.topMargin: Theme.dp(20); anchors.bottomMargin: Theme.dp(16)
                 }
             }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
 
-            Item { Layout.fillHeight: true }
+            // Log tail — fills the remaining vertical space.
+            LogDisplay {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumHeight: Theme.dp(120)
+                messages: alice ? alice.logMessages : []
+            }
         }
     }
 
@@ -473,17 +634,28 @@ Item {
                         Row {
                             spacing: Theme.dp(6)
                             Text {
+                                id: stdDepthText
                                 text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
                                 font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
                                 color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                                Behavior on color { ColorAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
                             }
                             Text {
                                 id: confText1
                                 visible: alice ? alice.depth > 0 : false
+                                // Fixed 4-char slot — see wideConfText above.
+                                horizontalAlignment: Text.AlignRight
+                                width: stdConfMetrics.advanceWidth
                                 text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
                                 font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
                                 color: Theme.textSecondary
-                                anchors.baseline: parent.children[0].baseline
+                                anchors.baseline: stdDepthText.baseline
+                                TextMetrics {
+                                    id: stdConfMetrics
+                                    font.family: Theme.fontFamilyMono
+                                    font.pixelSize: Theme.dp(18)
+                                    text: "100%"
+                                }
                             }
                         }
                     }
@@ -500,47 +672,83 @@ Item {
                             property real vidY: (height - fitH) / 2
 
                             VideoRenderer {
+                                id: stdRsFeed
                                 x: stdDepthRect.vidX; y: stdDepthRect.vidY
                                 width: stdDepthRect.fitW; height: stdDepthRect.fitH
-                                source: alice ? alice.colorFrame : null; visible: alice ? alice.realSenseConnected : false
+                                source: alice.colorFrame
+                                property bool hasFeed: alice ? alice.realSenseConnected : false
+                                visible: true
+                                opacity: hasFeed ? 1.0 : 0.0
+                                scale: hasFeed ? 1.0 : 0.95
+                                transformOrigin: Item.Center
+                                Behavior on opacity { OpacityAnimator { duration: 350; easing.type: Easing.OutCubic } }
+                                Behavior on scale { ScaleAnimator { duration: 350; easing.type: Easing.OutCubic } }
                             }
-                            // Crosshair — double-stroke reticle for visibility on any background
+                            // Face overlay (std layout) — same coordinate space as the RealSense preview above.
+                            FaceOverlay {
+                                anchors.fill: parent
+                                vidX: stdDepthRect.vidX
+                                vidY: stdDepthRect.vidY
+                                vidW: stdDepthRect.fitW
+                                vidH: stdDepthRect.fitH
+                                faces: alice ? alice.trackedFacesList : []
+                                visible: alice ? (alice.focusMode === 3 && alice.realSenseConnected) : false
+                                onFaceClicked: (tid) => { if (alice) alice.selectFace(tid) }
+                            }
+                            // Crosshair — hidden in AF-F since face tracking owns the measurement point.
+                            // Shares animation model with wideReticle above.
                             Item {
+                                id: stdReticle
                                 property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
                                 property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
                                 property real cx: stdDepthRect.vidX + normX * stdDepthRect.fitW
                                 property real cy: stdDepthRect.vidY + normY * stdDepthRect.fitH
                                 x: cx - 12; y: cy - 12
-                                width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+                                width: 24; height: 24
+                                visible: alice ? (alice.realSenseConnected && alice.focusMode !== 3) : false
 
-                                // Dark outline (3px wide, behind)
+                                Behavior on x { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+                                Behavior on y { NumberAnimation { duration: Theme.durationNormal; easing.type: Easing.OutCubic } }
+
+                                onNormXChanged: stdLockPulse.restart()
+                                onNormYChanged: stdLockPulse.restart()
+
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
-                                // Bright inner (1px, on top)
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 22; height: 1; color: "#ffffff" }
                                 Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 22; color: "#ffffff" }
-                                // Center ring
                                 Rectangle {
+                                    id: stdInnerRing
                                     anchors.centerIn: parent; width: 8; height: 8; radius: 4
                                     color: "transparent"; border.width: 1.5; border.color: "#ffffff"
+                                    transformOrigin: Item.Center
                                 }
                                 Rectangle {
                                     anchors.centerIn: parent; width: 10; height: 10; radius: 5
                                     color: "transparent"; border.width: 1; border.color: "#000000"; opacity: 0.5
                                 }
+
+                                SequentialAnimation {
+                                    id: stdLockPulse
+                                    NumberAnimation { target: stdInnerRing; property: "scale"; to: 0.75; duration: Theme.durationFast; easing.type: Easing.OutCubic }
+                                    NumberAnimation { target: stdInnerRing; property: "scale"; to: 1.0; duration: Theme.durationNormal; easing.type: Easing.OutBack }
+                                }
                             }
-                            // Drag area covers full rect but clamps coords to video region
+                            // Drag area — disabled in AF-F so a stray click doesn't fight the tracker.
                             MouseArea {
-                                anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                anchors.fill: parent
+                                enabled: alice ? alice.focusMode !== 3 : true
+                                cursorShape: enabled ? Qt.CrossCursor : Qt.ArrowCursor
                                 property bool isDragging: false
-                                onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
-                                onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y, true) }
+                                onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y, false) }
                                 onReleased: isDragging = false
-                                function updatePos(mx, my) {
+                                function updatePos(mx, my, isJump) {
                                     if (!alice) return
                                     var nx = Math.max(0, Math.min(1, (mx - stdDepthRect.vidX) / stdDepthRect.fitW))
                                     var ny = Math.max(0, Math.min(1, (my - stdDepthRect.vidY) / stdDepthRect.fitH))
-                                    alice.setMeasurementPosition(nx, ny)
+                                    if (isJump) alice.processTap(nx, ny)
+                                    else alice.setMeasurementPosition(nx, ny)
                                 }
                             }
                         }

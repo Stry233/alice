@@ -14,13 +14,19 @@ namespace alice {
 
 /**
  * Motor controller for CDC-ACM serial communication with nRF52840 dongle.
- * Ported from MotorControlManager.kt + MotorSerialHandler.kt.
+ *
+ * Discovers the dongle by VID/PID or CDC-ACM port name, opens a serial
+ * connection at 115200 baud, and translates high-level setPosition() calls
+ * into the wire protocol (with optional offset, reversal, and EMA smoothing).
+ * Auto-reconnects on device yank via a 2-second retry timer.
  */
 class MotorController : public QObject {
     Q_OBJECT
     Q_PROPERTY(bool connected READ isConnected NOTIFY connectionChanged)
     Q_PROPERTY(int position READ currentPosition NOTIFY positionChanged)
     Q_PROPERTY(int destinationAddress READ destinationAddress NOTIFY destinationChanged)
+    Q_PROPERTY(qint64 connectedSinceMs READ connectedSinceMs NOTIFY connectionChanged)
+    Q_PROPERTY(qint64 lastDisconnectMs READ lastDisconnectMs NOTIFY connectionChanged)
 
 public:
     // Known USB identifiers for nRF52840 dongle
@@ -33,6 +39,12 @@ public:
     bool isConnected() const { return connected_; }
     int currentPosition() const { return position_; }
     int destinationAddress() const { return destAddress_; }
+    qint64 connectedSinceMs() const { return connectedSinceMs_.load(); }
+    qint64 lastDisconnectMs() const { return lastDisconnectMs_.load(); }
+    /** Human-readable name of the detected serial device, if any. */
+    QString deviceDescription() const { return deviceDescription_; }
+    /** Short bus identifier (e.g. "/dev/ttyACM0") of the active port, if any. */
+    QString devicePortName() const { return devicePortName_; }
 
 public slots:
     /** Discover and connect to the motor dongle. */
@@ -58,9 +70,6 @@ public slots:
 
     /** Query current status. */
     void queryStatus();
-
-    /** Enable/disable exponential smoothing (alpha=0.2). */
-    void setSmoothingEnabled(bool enabled) { smoothingEnabled_ = enabled; }
 
     /** Set motor position offset (applied before sending). */
     void setOffset(int offset) { offset_ = offset; }
@@ -93,11 +102,14 @@ private:
     std::atomic<int> position_{0};
     int destAddress_ = 0xFFFF;
 
-    // Smoothing
-    bool smoothingEnabled_ = true;
-    float smoothedPosition_ = 0.0f;
-    bool hasPreviousPosition_ = false;
-    static constexpr float kSmoothingAlpha = 0.2f;
+    // Populated when openPort succeeds; cleared on disconnect. Used by the
+    // UI to show the actual detected device name in the Motor popover.
+    QString deviceDescription_;
+    QString devicePortName_;
+
+    // Connection lifecycle timestamps (epoch ms; 0 = never)
+    std::atomic<qint64> connectedSinceMs_{0};
+    std::atomic<qint64> lastDisconnectMs_{0};
 
     // Transform
     int offset_ = 0;
@@ -105,6 +117,10 @@ private:
 
     // Suppress repeated "not found" errors — only emit on first failure
     bool lastScanFailed_ = false;
+
+    // Defensive bounds on lineBuffer_ so a broken dongle can't OOM the app.
+    static constexpr int kMaxLineBufferBytes   = 8 * 1024;
+    static constexpr int kLineBufferTrimTail   = 1 * 1024;
 };
 
 } // namespace alice

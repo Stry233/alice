@@ -93,7 +93,7 @@ class AutofocusManager(
      * Calculate motor position for given depth
      */
     fun calculateMotorPosition(depthMeters: Float, applySmoothing: Boolean = true): Int? {
-        controller.updateConfiguration(enableSmoothing = applySmoothing)
+        if (!applySmoothing) controller.updateConfiguration(smoothingAlpha = 1.0f)
         controller.processDepthData(depthMeters, 1.0f)
         return controller.getMotorPositionCommand()
     }
