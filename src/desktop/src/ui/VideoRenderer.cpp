@@ -9,6 +9,11 @@ VideoRenderer::VideoRenderer(QQuickItem *parent)
 }
 
 void VideoRenderer::setSource(const QImage &image) {
+    // Skip if the image data pointer and size are identical (same frame)
+    if (image.constBits() == image_.constBits() &&
+        image.size() == image_.size() && !image.isNull()) {
+        return;
+    }
     image_ = image;
     emit sourceChanged();
     update();
@@ -16,9 +21,6 @@ void VideoRenderer::setSource(const QImage &image) {
 
 void VideoRenderer::paint(QPainter *painter) {
     if (image_.isNull()) return;
-
-    QRectF target(0, 0, width(), height());
-    QRectF source(0, 0, image_.width(), image_.height());
 
     // Maintain aspect ratio
     float scaleX = static_cast<float>(width()) / image_.width();
@@ -30,7 +32,8 @@ void VideoRenderer::paint(QPainter *painter) {
     float offsetX = (width() - drawW) / 2.0f;
     float offsetY = (height() - drawH) / 2.0f;
 
-    target = QRectF(offsetX, offsetY, drawW, drawH);
+    QRectF target(offsetX, offsetY, drawW, drawH);
+    QRectF source(0, 0, image_.width(), image_.height());
     painter->drawImage(target, image_, source);
 }
 

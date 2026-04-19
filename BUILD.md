@@ -47,6 +47,7 @@ sudo dnf install \
   qt6-qtbase-devel \
   qt6-qtdeclarative-devel \
   qt6-qtquickcontrols2-devel \
+  qt6-qtsvg-devel \
   qt6-qtmultimedia-devel \
   qt6-qtserialport-devel \
   qt6-qtwebsockets-devel \
@@ -62,6 +63,7 @@ sudo apt install \
   cmake g++ \
   qt6-base-dev \
   qt6-declarative-dev \
+  qt6-svg-dev \
   qt6-multimedia-dev \
   qt6-serialport-dev \
   qt6-websockets-dev \

@@ -1,355 +1,118 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
 import Alice.Renderers 1.0
 
 Item {
-    id: settingsView
-
-    property int currentTab: 0
-
-    RowLayout {
+    ScrollView {
+        id: settingsView
         anchors.fill: parent
-        spacing: 0
+        anchors.margins: Theme.dp(32)
 
-        // Left: Settings tabs (60%)
-        ColumnLayout {
-            Layout.preferredWidth: parent.width * 0.6
-            Layout.fillHeight: true
-            spacing: 0
+        GridLayout {
+            width: settingsView.width - Theme.dp(64)
+            x: Theme.dp(32)
+            columns: 3
+            columnSpacing: Theme.dp(24)
+            rowSpacing: Theme.dp(24)
 
-            TabBar {
-                id: settingsTabs
-                Layout.fillWidth: true
-                currentIndex: currentTab
-                onCurrentIndexChanged: currentTab = currentIndex
-                Material.accent: "#d0bcff"
-
-                TabButton { text: "Autofocus" }
-                TabButton { text: "Motor" }
-                TabButton { text: "Depth" }
-                TabButton { text: "Video" }
-                TabButton { text: "Network" }
-                TabButton { text: "System" }
-            }
-
-            StackLayout {
-                Layout.fillWidth: true
+            // Autofocus — force same height as Motor
+            SettingsCard {
+                title: "Autofocus"
                 Layout.fillHeight: true
-                currentIndex: currentTab
-
-                // Autofocus tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        Label { text: "Confidence Threshold"; color: "#a09da6" }
-                        Slider {
-                            Layout.fillWidth: true
-                            from: 0.0; to: 1.0; stepSize: 0.05
-                            value: 0.7
-                            Material.accent: "#d0bcff"
-                        }
-
-                        Label { text: "Smoothing"; color: "#a09da6" }
-                        Switch {
-                            checked: true
-                            Material.accent: "#d0bcff"
-                        }
-
-                        Label { text: "Response Speed"; color: "#a09da6" }
-                        Slider {
-                            Layout.fillWidth: true
-                            from: 0; to: 100; stepSize: 5
-                            value: 50
-                            Material.accent: "#d0bcff"
-                        }
-
-                        Button {
-                            text: "Reset Autofocus Settings"
-                            flat: true
-                            Material.foreground: "#f2b8b5"
-                        }
-                    }
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+                    RowLayout { Text { text: "Confidence Threshold"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: "0.70"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
+                    Slider { Layout.fillWidth: true; from: 0; to: 1; stepSize: 0.05; value: 0.7; Material.accent: Theme.primary }
+                    RowLayout { Text { text: "Smoothing"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Switch { Material.accent: Theme.primary; checked: true } }
+                    RowLayout { Text { text: "Response Speed"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: "50"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
+                    Slider { Layout.fillWidth: true; from: 0; to: 100; stepSize: 5; value: 50; Material.accent: Theme.primary }
                 }
+            }
 
-                // Motor tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        Label { text: "Reverse Direction"; color: "#a09da6" }
-                        Switch {
-                            Material.accent: "#d0bcff"
-                        }
-
-                        Label { text: "Calibration Offset"; color: "#a09da6" }
-                        SpinBox {
-                            from: -500; to: 500
-                            value: 0
-                            Layout.fillWidth: true
-                        }
-
-                        Label { text: "Destination Address (hex)"; color: "#a09da6" }
-                        RowLayout {
-                            TextField {
-                                id: destField
-                                text: "FFFF"
-                                Layout.fillWidth: true
-                                inputMask: "HHHH"
-                                font.family: "RobotoMono"
-                            }
-                            Button {
-                                text: "Set"
-                                onClicked: { if (!alice) return; alice.setMotorDestination(parseInt(destField.text, 16)) }
-                            }
-                            Button {
-                                text: "Scan"
-                                onClicked: { if (!alice) return; alice.scanMotorAddress(parseInt(destField.text, 16)) }
-                            }
-                        }
-
-                        Button {
-                            text: "Reset Motor Settings"
-                            flat: true
-                            Material.foreground: "#f2b8b5"
-                        }
-                    }
-                }
-
-                // Depth tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        Label { text: "Confidence Threshold"; color: "#a09da6" }
-                        Slider {
-                            Layout.fillWidth: true
-                            from: 0.0; to: 1.0; stepSize: 0.05
-                            value: 0.7
-                            Material.accent: "#d0bcff"
-                        }
-
-                        Label { text: "Min Distance (mm)"; color: "#a09da6" }
-                        SpinBox { from: 100; to: 1000; value: 200; Layout.fillWidth: true }
-
-                        Label { text: "Max Distance (mm)"; color: "#a09da6" }
-                        SpinBox { from: 1000; to: 10000; value: 5000; Layout.fillWidth: true }
-
-                        Button {
-                            text: "Reset Depth Settings"
-                            flat: true
-                            Material.foreground: "#f2b8b5"
-                        }
-                    }
-                }
-
-                // Video tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        // Depth Camera section
-                        Label { text: "Depth Camera (RealSense)"; color: "#a09da6"; font.pixelSize: 14; font.weight: Font.Bold }
-
-                        Label { text: "Depth Resolution"; color: "#a09da6" }
-                        ComboBox {
-                            Layout.fillWidth: true
-                            model: alice ? alice.realSenseDepthModes : []
-                            textRole: "label"
-                            Material.accent: "#d0bcff"
-                            onActivated: (index) => {
-                                if (!alice) return
-                                let mode = alice.realSenseDepthModes[index]
-                                // For now, set depth and color to same resolution
-                                alice.setRealSenseResolution(mode.width, mode.height, mode.fps, mode.width, mode.height, mode.fps)
-                            }
-                        }
-
-                        // Depth preview (4:3 aspect ratio)
+            // Motor — force same height as Autofocus
+            SettingsCard {
+                title: "Motor"
+                Layout.fillHeight: true
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+                    RowLayout { Text { text: "Reverse Direction"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Switch { Material.accent: Theme.primary } }
+                    Text { text: "Calibration Offset"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall }
+                    SpinBox { from: -500; to: 500; value: 0; Layout.fillWidth: true }
+                    Text { text: "Dest Address (hex)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall }
+                    RowLayout {
+                        spacing: Theme.dp(8)
+                        TextField { id: destField; text: "FFFF"; Layout.fillWidth: true; inputMask: "HHHH"; font.family: Theme.fontFamilyMono }
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: width * 3 / 4
-                            Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
-                            DepthRenderer {
-                                anchors.centerIn: parent
-                                width: Math.min(parent.width - 4, (parent.height - 4) * 4 / 3)
-                                height: width * 3 / 4
-                                source: alice ? alice.depthFrame : null
-                                depth: alice ? alice.depth : 0
-                                confidence: alice ? alice.depthConfidence : 0
-                            }
+                            width: setLabel.implicitWidth + Theme.dp(24); height: Theme.dp(34); radius: Theme.radiusSm
+                            color: Theme.surface; border.width: 1; border.color: Theme.border
+                            Text { id: setLabel; anchors.centerIn: parent; text: "Set"; font.pixelSize: Theme.fontSizeSmall; color: Theme.textPrimary }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (alice) alice.setMotorDestination(parseInt(destField.text, 16)) } }
                         }
-
-                        Label { text: "Color Preview"; color: "#a09da6" }
                         Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: width * 3 / 4
-                            Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
-                            VideoRenderer {
-                                anchors.centerIn: parent
-                                width: Math.min(parent.width - 4, (parent.height - 4) * 4 / 3)
-                                height: width * 3 / 4
-                                source: alice ? alice.colorFrame : null
-                            }
-                        }
-
-                        // Separator
-                        Rectangle { Layout.fillWidth: true; height: 1; color: "#3b383e" }
-
-                        // Capture Card section
-                        Label { text: "Camera (Capture Card)"; color: "#a09da6"; font.pixelSize: 14; font.weight: Font.Bold }
-
-                        Label { text: "Resolution"; color: "#a09da6" }
-                        ComboBox {
-                            Layout.fillWidth: true
-                            model: alice ? alice.captureCardFormats : []
-                            textRole: "label"
-                            Material.accent: "#d0bcff"
-                            onActivated: (index) => {
-                                if (!alice) return
-                                let fmt = alice.captureCardFormats[index]
-                                alice.setCaptureCardResolution(fmt.width, fmt.height, fmt.maxFps)
-                            }
-                        }
-
-                        // Camera preview (16:9 aspect ratio)
-                        Rectangle {
-                            Layout.fillWidth: true
-                            Layout.preferredHeight: width * 9 / 16
-                            Layout.maximumHeight: 200
-                            color: "#000000"
-                            radius: 4
-                            VideoRenderer {
-                                anchors.centerIn: parent
-                                width: Math.min(parent.width - 4, (parent.height - 4) * 16 / 9)
-                                height: width * 9 / 16
-                                anchors.margins: 2
-                                source: alice ? alice.captureFrame : null
-                            }
-                        }
-                    }
-                }
-
-                // Network tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        Label { text: "Sync Server Port"; color: "#a09da6" }
-                        SpinBox { from: 1024; to: 65535; value: 8765; Layout.fillWidth: true }
-
-                        RowLayout {
-                            Button {
-                                text: alice && alice.syncServerRunning ? "Stop Server" : "Start Server"
-                                Material.background: alice && alice.syncServerRunning ? "#f2b8b5" : "#6650a4"
-                                onClicked: { if (!alice) return; alice.syncServerRunning ? alice.stopSyncServer() : alice.startSyncServer() }
-                            }
-                            Label {
-                                text: alice && alice.syncServerRunning ? "Running" : "Stopped"
-                                color: alice && alice.syncServerRunning ? "#64ff64" : "#a09da6"
-                            }
-                        }
-                    }
-                }
-
-                // System tab
-                ScrollView {
-                    ColumnLayout {
-                        width: settingsView.width * 0.55
-                        spacing: 16
-                        anchors.margins: 20
-
-                        Label { text: "Log Verbosity"; color: "#a09da6" }
-                        ComboBox {
-                            model: ["ERROR", "WARNING", "INFO", "DEBUG"]
-                            currentIndex: 2
-                            Layout.fillWidth: true
-                        }
-
-                        Button {
-                            text: "Reset All Settings"
-                            flat: true
-                            Material.foreground: "#f2b8b5"
+                            width: scanLabel.implicitWidth + Theme.dp(24); height: Theme.dp(34); radius: Theme.radiusSm
+                            color: Theme.surface; border.width: 1; border.color: Theme.border
+                            Text { id: scanLabel; anchors.centerIn: parent; text: "Scan"; font.pixelSize: Theme.fontSizeSmall; color: Theme.textPrimary }
+                            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: { if (alice) alice.scanMotorAddress(parseInt(destField.text, 16)) } }
                         }
                     }
                 }
             }
-        }
 
-        // Separator
-        Rectangle { Layout.fillHeight: true; width: 1; color: "#3b383e" }
-
-        // Right: Live status (40%)
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.margins: 16
-            spacing: 12
-
-            Label {
-                text: "DEVICE STATUS"
-                font.pixelSize: 11
-                font.weight: Font.Bold
-                font.letterSpacing: 1.5
-                color: "#a09da6"
-            }
-
-            GridLayout {
-                columns: 2
-                columnSpacing: 16
-                rowSpacing: 8
-
-                Label { text: "Motor:"; color: "#a09da6" }
-                Label {
-                    text: alice && alice.motorConnected ? "Connected" : "Disconnected"
-                    color: alice && alice.motorConnected ? "#64ff64" : "#f2b8b5"
-                }
-
-                Label { text: "RealSense:"; color: "#a09da6" }
-                Label {
-                    text: alice && alice.realSenseConnected ? "Connected" : "Disconnected"
-                    color: alice && alice.realSenseConnected ? "#64ff64" : "#f2b8b5"
-                }
-
-                Label { text: "Sync:"; color: "#a09da6" }
-                Label {
-                    text: alice && alice.syncClientConnected ? "Client connected" :
-                          alice && alice.syncServerRunning ? "Waiting for client" : "Server off"
-                    color: alice && alice.syncClientConnected ? "#64ff64" : "#a09da6"
-                }
-
-                Label { text: "Depth:"; color: "#a09da6" }
-                Label {
-                    text: alice && alice.depth > 0 ? alice.depth.toFixed(3) + " m" : "—"
-                    font.family: "RobotoMono"
-                    color: "#e6e1e5"
-                }
-
-                Label { text: "Motor Pos:"; color: "#a09da6" }
-                Label {
-                    text: (alice ? alice.motorPosition : 0).toString()
-                    font.family: "RobotoMono"
-                    color: "#e6e1e5"
+            // Depth Sensor
+            SettingsCard {
+                title: "Depth Sensor"
+                Layout.fillHeight: true
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+                    RowLayout { Text { text: "Confidence Threshold"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall; Layout.fillWidth: true } Text { text: "0.70"; font.family: Theme.fontFamilyMono; font.pixelSize: Theme.fontSizeSmall; color: Theme.primary } }
+                    Slider { Layout.fillWidth: true; from: 0; to: 1; stepSize: 0.05; value: 0.7; Material.accent: Theme.primary }
+                    Text { text: "Min Distance (mm)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall }
+                    SpinBox { from: 100; to: 1000; value: 200; Layout.fillWidth: true }
+                    Text { text: "Max Distance (mm)"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall }
+                    SpinBox { from: 1000; to: 10000; value: 5000; Layout.fillWidth: true }
                 }
             }
 
-            Item { Layout.fillHeight: true }
+            // Video (2-col span) — larger preview
+            SettingsCard {
+                title: "Video"
+                columnSpan: 2
+                RowLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(24)
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: Theme.dp(10)
+                        Text { text: "Depth Camera (RealSense)"; color: Theme.textPrimary; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold }
+                        ComboBox { Layout.fillWidth: true; model: alice ? alice.realSenseDepthModes : []; textRole: "label"; Material.accent: Theme.primary
+                            onActivated: (index) => { if (!alice) return; let m = alice.realSenseDepthModes[index]; alice.setRealSenseResolution(m.width, m.height, m.fps, m.width, m.height, m.fps) } }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: width * 3 / 4; Layout.maximumHeight: Theme.dp(160); color: Theme.well; radius: Theme.radiusSm
+                            DepthRenderer { anchors.centerIn: parent; width: Math.min(parent.width - 4, (parent.height - 4) * 4 / 3); height: width * 3 / 4; source: alice ? alice.depthFrame : null; depth: alice ? alice.depth : 0; confidence: alice ? alice.depthConfidence : 0 } }
+                    }
+                    ColumnLayout {
+                        Layout.fillWidth: true; spacing: Theme.dp(10)
+                        Text { text: "Camera (Capture Card)"; color: Theme.textPrimary; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold }
+                        ComboBox { Layout.fillWidth: true; model: alice ? alice.captureCardFormats : []; textRole: "label"; Material.accent: Theme.primary
+                            onActivated: (index) => { if (!alice) return; let f = alice.captureCardFormats[index]; alice.setCaptureCardResolution(f.width, f.height, f.maxFps) } }
+                        Rectangle { Layout.fillWidth: true; Layout.preferredHeight: width * 9 / 16; Layout.maximumHeight: Theme.dp(160); color: Theme.well; radius: Theme.radiusSm
+                            VideoRenderer { anchors.centerIn: parent; width: Math.min(parent.width - 4, (parent.height - 4) * 16 / 9); height: width * 9 / 16; source: alice ? alice.captureFrame : null } }
+                    }
+                }
+            }
+
+            // System — top-aligned with Video row
+            SettingsCard {
+                title: "System"
+                Layout.alignment: Qt.AlignTop
+                ColumnLayout {
+                    Layout.fillWidth: true; spacing: Theme.dp(12)
+                    Text { text: "Log Verbosity"; color: Theme.textSecondary; font.pixelSize: Theme.fontSizeSmall }
+                    ComboBox { model: ["ERROR", "WARNING", "INFO", "DEBUG"]; currentIndex: 2; Layout.fillWidth: true }
+                    Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+                    Button { text: "Reset All Settings"; flat: true; Material.foreground: Theme.dangerText }
+                }
+            }
         }
     }
 }

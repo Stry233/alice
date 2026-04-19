@@ -1,15 +1,15 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
-import QtQuick.Controls.Material
 import QtQuick.Layouts
 
-RowLayout {
+Row {
     id: modeSelector
     property int currentMode: 0
     property bool enabled: true
     signal modeChanged(int mode)
 
-    spacing: 4
+    spacing: Theme.dp(4)  // HTML gap:2px at 200% = 4
 
     Repeater {
         model: [
@@ -19,31 +19,43 @@ RowLayout {
             { label: "AF-F", mode: 3, tooltip: "Face Tracking" }
         ]
 
-        Button {
+        Rectangle {
             required property var modelData
-            Layout.fillWidth: true
-            checkable: true
-            checked: currentMode === modelData.mode
-            flat: !checked
-            enabled: modeSelector.enabled
 
-            Material.background: checked ? "#6650a4" : "transparent"
+            property bool isActive: modeSelector.currentMode === modelData.mode
+            property bool isHovered: focusMa.containsMouse && !isActive
 
-            contentItem: Label {
+            width: focusLabel.implicitWidth + Theme.dp(40); height: Theme.dp(42); radius: Theme.radiusSm
+            color: isActive ? Theme.primary : (isHovered ? Theme.surfaceHover : Theme.surface)
+            border.width: isActive ? 0 : 1
+            border.color: Theme.border
+
+            Behavior on color { ColorAnimation { duration: Theme.durationFast } }
+
+            Text {
+                id: focusLabel
+                anchors.centerIn: parent
                 text: modelData.label
-                color: !modeSelector.enabled ? "#555555"
-                     : checked ? "#ffffff"
-                     : "#a09da6"
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                font: parent.font
+                font.family: Theme.fontFamily
+                font.pixelSize: Theme.fontSizeSmall
+                font.weight: isActive ? Font.DemiBold : Font.Normal
+                color: !modeSelector.enabled ? Theme.textDisabled
+                     : isActive ? "#ffffff"
+                     : Theme.textSecondary
+            }
+
+            MouseArea {
+                id: focusMa
+                anchors.fill: parent
+                cursorShape: Qt.PointingHandCursor
+                enabled: modeSelector.enabled
+                hoverEnabled: true
+                onClicked: modeSelector.modeChanged(modelData.mode)
             }
 
             ToolTip.text: modelData.tooltip
-            ToolTip.visible: hovered
-            ToolTip.delay: 500
-
-            onClicked: modeSelector.modeChanged(modelData.mode)
+            ToolTip.visible: focusMa.containsMouse
+            ToolTip.delay: 300
         }
     }
 }

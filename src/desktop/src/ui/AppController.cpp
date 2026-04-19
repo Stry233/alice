@@ -65,6 +65,14 @@ AppController::AppController(QObject *parent)
             this, [this](bool connected) {
         autofocus_->updateDeviceReadiness(connected, realsense_->isConnected());
         emit deviceStateChanged();
+        if (connected) {
+            // Restore last motor position
+            int lastPos = settings_->motorLastPosition();
+            if (lastPos > 0 && lastPos <= 4095) {
+                motor_->setPosition(lastPos);
+                log("MOTOR", QString("Restored position to %1").arg(lastPos));
+            }
+        }
         log("MOTOR", connected ? "Connected" : "Disconnected");
     });
     connect(coordinator_.get(), &DeviceCoordinator::realSenseConnectionChanged,
@@ -130,15 +138,42 @@ AppController::AppController(QObject *parent)
 }
 
 AppController::~AppController() {
+    // Disconnect ALL signals from hardware to prevent callbacks during destruction
+    realsense_->disconnect(this);
+    captureCard_->disconnect(this);
+    motor_->disconnect(this);
+    coordinator_->disconnect(this);
+    syncServer_->disconnect(this);
+
     stateTimer_.stop();
-    syncServer_->stop(); // Send close frame to Android before shutting down
+    syncServer_->stop();
     coordinator_->stop();
     captureCard_->stop();
     realsense_->stop();
+
+    // Give detached threads time to notice running_=false and exit
+    QThread::msleep(100);
 }
 
 void AppController::initialize() {
-    log("SYSTEM", "Alice Desktop v0.2 starting...");
+    // ASCII art banner
+    const QStringList banner = {
+        "       d8888 888 d8b",
+        "      d88888 888 Y8P",
+        "     d88P888 888",
+        "    d88P 888 888 888  .d8888b .d88b.",
+        "   d88P  888 888 888 d88P\"   d8P  Y8b",
+        "  d88P   888 888 888 888     88888888",
+        " d8888888888 888 888 Y88b.   Y8b.",
+        "d88P     888 888 888  \"Y8888P \"Y8888",
+        "",
+        "-------------------------------------",
+    };
+    for (const auto &line : banner)
+        logBuffer_.append(line);
+    emit logChanged();
+
+    log("SYSTEM", "Alice Desktop v0.1 starting...");
 
     // Apply settings to motor
     motor_->setOffset(settings_->motorOffset());
@@ -212,6 +247,20 @@ int AppController::targetMotorPosition() const { return autofocus_->targetMotorP
 QString AppController::mappingName() const {
     const auto &m = autofocus_->currentMapping();
     return m ? QString::fromStdString(m->name()) : "";
+}
+
+QVariantList AppController::mappingPoints() const {
+    QVariantList result;
+    const auto &m = autofocus_->currentMapping();
+    if (!m) return result;
+    for (const auto &pt : m->points()) {
+        QVariantMap p;
+        p["depth"] = pt.depth;
+        p["motorPosition"] = pt.motorPosition;
+        p["confidence"] = pt.confidence;
+        result.append(p);
+    }
+    return result;
 }
 
 void AppController::loadMappingFromFile(const QString &path) {
@@ -595,7 +644,8 @@ void AppController::broadcastCurrentMapping() {
 void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame, int quality) {
     if (!syncServer_->hasClient()) return;
 
-    // Downscale large frames (capture card 1080p) for streaming
+    // Color/depth frames are small (640x480) — synchronous encoding is fast enough.
+    // Capture card frames use separate threaded path in onCaptureFrame.
     QImage scaled = frame;
     if (frame.width() > 960) {
         scaled = frame.scaled(960, 540, Qt::KeepAspectRatio, Qt::FastTransformation);
@@ -609,7 +659,6 @@ void AppController::sendFrameToClient(uint8_t frameType, const QImage &frame, in
 
     if (jpegData.isEmpty()) return;
 
-    // Binary message: [type:1][timestamp:4][jpeg:N]
     QByteArray msg;
     msg.reserve(5 + jpegData.size());
     msg.append(static_cast<char>(frameType));

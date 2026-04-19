@@ -1,0 +1,646 @@
+import QtQuick
+import Alice.UI
+import QtQuick.Controls
+import QtQuick.Controls.Material
+import QtQuick.Layouts
+import QtQuick.Dialogs
+import Alice.Renderers 1.0
+
+Item {
+    id: opsView
+
+    // Responsive modes: compact (<1280), standard (1280-1599), wide (1600+)
+    readonly property bool compactMode: width < Theme.breakpointStandard
+    readonly property bool wideMode: width >= Theme.breakpointWide
+
+    // Camera zoom/pan state
+    property real zoomLevel: 1.0
+    property real panX: 0.5
+    property real panY: 0.5
+
+    ColumnLayout {
+        anchors.fill: parent
+        spacing: 0
+
+        RowLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            // LEFT sidebar (wide mode only — controls move here)
+            ColumnLayout {
+                visible: wideMode
+                Layout.preferredWidth: Theme.sidebarWide
+                Layout.minimumWidth: Theme.sidebarWide
+                Layout.maximumWidth: Theme.sidebarWide
+                Layout.fillHeight: true
+                spacing: 0
+
+                // Motor — content-driven height
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: motorCol.implicitHeight + Theme.dp(40)
+                    Layout.maximumHeight: Layout.preferredHeight
+                    color: Theme.bg; border.width: 0
+
+                    ColumnLayout {
+                        id: motorCol
+                        anchors.fill: parent
+                        anchors.leftMargin: Theme.dp(24); anchors.rightMargin: Theme.dp(24)
+                        anchors.topMargin: Theme.dp(20); anchors.bottomMargin: Theme.dp(16)
+                        spacing: Theme.dp(12)
+
+                        SectionHeader { text: "MOTOR POSITION" }
+                        MotorSlider {
+                            Layout.fillWidth: true
+                            motorPos: alice ? alice.motorPosition : 0
+                            enabled: alice ? alice.motorConnected : false
+                            onMotorMoved: (pos) => { if (!alice) return; alice.focusMode = 0; alice.setMotorPosition(pos) }
+                        }
+                    }
+                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+                // Depth feed — max height capped for 16:9 fill
+                Item {
+                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: Theme.dp(240)
+                    Layout.minimumHeight: Theme.dp(120)
+                    Layout.maximumHeight: Theme.dp(323)
+
+                    ColumnLayout {
+                        anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+
+                        RowLayout {
+                            SectionHeader { text: "DEPTH"; Layout.fillWidth: true }
+                            Row {
+                                spacing: Theme.dp(6)
+                                Text {
+                                    text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
+                                    font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
+                                    color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                                }
+                                Text {
+                                    id: wideConfText
+                                    visible: alice ? alice.depth > 0 : false
+                                    text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
+                                    font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
+                                    color: Theme.textSecondary
+                                    anchors.baseline: parent.children[0].baseline
+                                }
+                            }
+                        }
+
+                        Item {
+                            Layout.fillWidth: true; Layout.fillHeight: true
+
+                            Rectangle {
+                                id: wideDepthRect
+                                anchors.fill: parent; color: Theme.well; radius: Theme.radiusSm
+
+                                // Use the VideoRenderer to detect actual aspect ratio
+                                // Default 16:9; updates when renderer gets its first frame
+                                property real vidAspect: 16.0 / 9.0
+                                property real fitW: Math.min(width, height * vidAspect)
+                                property real fitH: fitW / vidAspect
+                                property real vidX: (width - fitW) / 2
+                                property real vidY: (height - fitH) / 2
+
+                                VideoRenderer {
+                                    x: wideDepthRect.vidX; y: wideDepthRect.vidY
+                                    width: wideDepthRect.fitW; height: wideDepthRect.fitH
+                                    source: alice ? alice.colorFrame : null
+                                    visible: alice ? alice.realSenseConnected : false
+                                }
+
+                                // Double-stroke reticle
+                                Item {
+                                    property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
+                                    property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
+                                    property real cx: wideDepthRect.vidX + normX * wideDepthRect.fitW
+                                    property real cy: wideDepthRect.vidY + normY * wideDepthRect.fitH
+                                    x: cx - 12; y: cy - 12
+                                    width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+
+                                    Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
+                                    Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
+                                    Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 22; height: 1; color: "#ffffff" }
+                                    Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 22; color: "#ffffff" }
+                                    Rectangle { anchors.centerIn: parent; width: 8; height: 8; radius: 4; color: "transparent"; border.width: 1.5; border.color: "#ffffff" }
+                                    Rectangle { anchors.centerIn: parent; width: 10; height: 10; radius: 5; color: "transparent"; border.width: 1; border.color: "#000000"; opacity: 0.5 }
+                                }
+
+                                MouseArea {
+                                    anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                    property bool isDragging: false
+                                    onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
+                                    onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                    onReleased: isDragging = false
+                                    function updatePos(mx, my) {
+                                        if (!alice) return
+                                        var nx = Math.max(0, Math.min(1, (mx - wideDepthRect.vidX) / wideDepthRect.fitW))
+                                        var ny = Math.max(0, Math.min(1, (my - wideDepthRect.vidY) / wideDepthRect.fitH))
+                                        alice.setMeasurementPosition(nx, ny)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+                // Calibration (flex — shorter than depth)
+                Item {
+                    id: wideCalibPanel
+                    Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: 200
+                    Layout.minimumHeight: 80
+                    ColumnLayout {
+                        id: calibCol
+                        anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                        SectionHeader { text: "CALIBRATION" }
+
+                        Text {
+                            text: alice && alice.hasMapping ? alice.mappingName : "No mapping"
+                            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold
+                            color: alice && alice.hasMapping ? Theme.success : Theme.textDisabled
+                        }
+
+                        // Mapping visualization
+                        Rectangle {
+                            Layout.fillWidth: true; Layout.fillHeight: true
+                            color: Theme.well; radius: Theme.radiusSm
+                            visible: wideCalibPanel.height > Theme.dp(260)
+                            MappingPlot { anchors.fill: parent }
+                        }
+
+                        // Preset selector
+                        Rectangle {
+                            Layout.fillWidth: true; height: Theme.dp(40); radius: Theme.radiusSm
+                            color: Theme.surface; border.width: 1; border.color: Theme.border
+
+                            Text {
+                                anchors.left: parent.left; anchors.leftMargin: Theme.dp(16); anchors.verticalCenter: parent.verticalCenter
+                                text: alice && alice.hasMapping ? alice.mappingName : "Select Preset..."
+                                font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall
+                                color: alice && alice.hasMapping ? Theme.textPrimary : Theme.textSecondary
+                            }
+                            Text {
+                                anchors.right: parent.right; anchors.rightMargin: Theme.dp(16); anchors.verticalCenter: parent.verticalCenter
+                                text: "\u25BE"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled
+                            }
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                                onClicked: widePresetMenu.popup()
+                            }
+                            FileDialog {
+                                id: wideFileDialog
+                                title: "Load Calibration Mapping"
+                                nameFilters: ["JSON files (*.json)", "All files (*)"]
+                                onAccepted: { if (alice) { alice.loadMappingFromFile(selectedFile); widePresetMenu.currentText = "From file" } }
+                            }
+                            Menu {
+                                id: widePresetMenu
+                                property string currentText: ""
+                                MenuItem { text: "Select Preset..."; onTriggered: { widePresetMenu.currentText = ""; if (alice) alice.clearMapping() } }
+                                MenuSeparator {}
+                                MenuItem { text: "Linear"; onTriggered: { widePresetMenu.currentText = "Linear"; if (alice) alice.loadPreset(0) } }
+                                MenuItem { text: "Logarithmic"; onTriggered: { widePresetMenu.currentText = "Logarithmic"; if (alice) alice.loadPreset(1) } }
+                                MenuItem { text: "Portrait"; onTriggered: { widePresetMenu.currentText = "Portrait"; if (alice) alice.loadPreset(2) } }
+                                MenuItem { text: "Landscape"; onTriggered: { widePresetMenu.currentText = "Landscape"; if (alice) alice.loadPreset(3) } }
+                                MenuItem { text: "Macro"; onTriggered: { widePresetMenu.currentText = "Macro"; if (alice) alice.loadPreset(4) } }
+                                MenuSeparator {}
+                                MenuItem { text: "From file..."; onTriggered: wideFileDialog.open() }
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { visible: wideMode; Layout.fillHeight: true; width: 1; color: Theme.border }
+
+            // CENTER: Camera feed (always present, flex)
+            Item {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                Layout.minimumWidth: 400
+
+                Rectangle {
+                    anchors.fill: parent; color: Theme.well; clip: true
+
+                    // Zoomable camera container — uses width/height * zoom, positioned by pan
+                    Item {
+                        id: cameraContainer
+                        property real zw: parent.width * opsView.zoomLevel
+                        property real zh: parent.height * opsView.zoomLevel
+
+                        width: zw; height: zh
+                        x: -(zw - parent.width) * opsView.panX
+                        y: -(zh - parent.height) * opsView.panY
+
+                        VideoRenderer {
+                            id: cameraFeed
+                            anchors.fill: parent
+                            source: alice ? alice.captureFrame : null
+                            visible: alice ? alice.captureCardConnected : false
+                        }
+
+                        // Placeholder
+                        Label {
+                            anchors.centerIn: parent; text: "No camera"; font.pixelSize: Theme.fontSizeH2; color: Theme.textPlaceholder
+                            visible: alice ? !alice.captureCardConnected : true
+                        }
+
+                        // Face overlay
+                        FaceOverlay {
+                            anchors.fill: parent
+                            faces: alice ? alice.trackedFaces() : []
+                            showCrosshair: false
+                            visible: alice ? alice.focusMode === 3 : false
+                        }
+                    }
+
+                    // AF status chip (top-left) — matches HTML padding:2px 8px at 200%
+                    Rectangle {
+                        anchors.top: parent.top; anchors.left: parent.left; anchors.margins: Theme.dp(12)
+                        width: afLabel.implicitWidth + Theme.dp(32); height: Theme.dp(32); radius: Theme.radiusSm
+                        color: alice && alice.activelyFocusing ? Qt.rgba(0.055, 0.231, 0.173, 0.9) : Qt.rgba(0.106, 0.125, 0.145, 0.9)
+                        border.width: 1; border.color: alice && alice.activelyFocusing ? Theme.success : Theme.border
+                        visible: alice ? alice.focusMode > 0 : false
+                        Text {
+                            id: afLabel; anchors.centerIn: parent
+                            text: ["", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
+                            font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold
+                            color: alice && alice.activelyFocusing ? Theme.success : Theme.textSecondary
+                        }
+                    }
+
+                    // Histogram overlay (top-right)
+                    Rectangle {
+                        anchors.top: parent.top; anchors.right: parent.right; anchors.margins: Theme.dp(8)
+                        width: Theme.dp(220); height: Theme.dp(130); radius: Theme.radiusSm
+                        color: Qt.rgba(0.106, 0.125, 0.145, 0.92)
+                        border.width: 1; border.color: Theme.border
+                        visible: histRenderer.source !== null
+
+                        Text {
+                            id: histTitle
+                            anchors.top: parent.top; anchors.left: parent.left
+                            anchors.margins: Theme.dp(6)
+                            text: "HISTOGRAM"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled
+                        }
+
+                        HistogramRenderer {
+                            id: histRenderer
+                            anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                            anchors.top: histTitle.bottom
+                            anchors.margins: Theme.dp(6); anchors.topMargin: Theme.dp(4)
+                            source: alice ? (alice.captureCardConnected ? alice.captureFrame : alice.colorFrame) : null
+                        }
+                    }
+
+                    // Zoom toolbar (bottom-left, z:10 above the drag MouseArea)
+                    ZoomToolbar {
+                        z: 10
+                        anchors.bottom: parent.bottom; anchors.left: parent.left; anchors.margins: 8
+                        zoomLevel: opsView.zoomLevel
+                        onZoomIn: opsView.zoomLevel = Math.min(Theme.zoomMax, opsView.zoomLevel + Theme.zoomStep)
+                        onZoomOut: opsView.zoomLevel = Math.max(Theme.zoomMin, opsView.zoomLevel - Theme.zoomStep)
+                        onZoomTo: (level) => { opsView.zoomLevel = Math.max(Theme.zoomMin, Math.min(Theme.zoomMax, level)) }
+                        onFitRequested: opsView.zoomLevel = 1.0
+                    }
+
+                    // MiniMap (bottom-right, z:10 above drag MouseArea)
+                    MiniMap {
+                        z: 10
+                        anchors.bottom: parent.bottom; anchors.right: parent.right; anchors.margins: 8
+                        zoomLevel: opsView.zoomLevel; panX: opsView.panX; panY: opsView.panY
+                    }
+
+                    // Zoom scroll + drag-to-pan (no click-to-focus on camera)
+                    MouseArea {
+                        anchors.fill: parent; z: 1
+                        property bool dragging: false
+                        property real dragStartX: 0
+                        property real dragStartY: 0
+                        property real panStartX: 0
+                        property real panStartY: 0
+                        cursorShape: opsView.zoomLevel > 1.0 ? Qt.OpenHandCursor : Qt.ArrowCursor
+
+                        onPressed: (mouse) => {
+                            if (opsView.zoomLevel > 1.0) {
+                                dragging = true
+                                dragStartX = mouse.x; dragStartY = mouse.y
+                                panStartX = opsView.panX; panStartY = opsView.panY
+                                cursorShape = Qt.ClosedHandCursor
+                            }
+                        }
+                        onPositionChanged: (mouse) => {
+                            if (dragging) {
+                                let dx = (mouse.x - dragStartX) / width
+                                let dy = (mouse.y - dragStartY) / height
+                                opsView.panX = Math.max(0, Math.min(1, panStartX - dx))
+                                opsView.panY = Math.max(0, Math.min(1, panStartY - dy))
+                            }
+                        }
+                        onReleased: { dragging = false; cursorShape = opsView.zoomLevel > 1.0 ? Qt.OpenHandCursor : Qt.ArrowCursor }
+                        onWheel: (wheel) => {
+                            if (wheel.angleDelta.y > 0) opsView.zoomLevel = Math.min(Theme.zoomMax, opsView.zoomLevel + 0.1)
+                            else opsView.zoomLevel = Math.max(Theme.zoomMin, opsView.zoomLevel - 0.1)
+                            if (opsView.zoomLevel <= 1.0) { opsView.panX = 0.5; opsView.panY = 0.5 }
+                        }
+                    }
+                }
+            }
+
+            Rectangle { Layout.fillHeight: true; width: 1; color: Theme.border }
+
+            // RIGHT sidebar
+            ColumnLayout {
+                Layout.preferredWidth: compactMode ? Theme.sidebarNarrow : (wideMode ? Theme.telemetryColumnWidth : Theme.sidebarStandard)
+                Layout.minimumWidth: compactMode ? Theme.sidebarNarrow : (wideMode ? Theme.telemetryColumnWidth : Theme.sidebarStandard)
+                Layout.maximumWidth: compactMode ? Theme.sidebarNarrow : (wideMode ? Theme.telemetryColumnWidth : Theme.sidebarStandard)
+                Layout.fillHeight: true
+                spacing: 0
+
+                // Compact: motor + numeric depth only
+                // Standard: motor + depth feed + calibration
+                // Wide: telemetry + system + log
+                Loader {
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    sourceComponent: compactMode ? compactRightComponent : (wideMode ? wideRightComponent : standardRightComponent)
+                }
+            }
+        }
+
+        // Bottom strip
+        BottomStrip { Layout.fillWidth: true }
+    }
+
+    // Compact mode right sidebar (1024-1279px): motor + numeric depth only
+    Component {
+        id: compactRightComponent
+
+        ColumnLayout {
+            spacing: 0
+
+            // Motor
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: cmpMotorCol.implicitHeight + 20; color: Theme.bg
+                ColumnLayout {
+                    id: cmpMotorCol; anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                    SectionHeader { text: "MOTOR POSITION" }
+                    MotorSlider {
+                        Layout.fillWidth: true; motorPos: alice ? alice.motorPosition : 0
+                        enabled: alice ? alice.motorConnected : false
+                        onMotorMoved: (pos) => { if (!alice) return; alice.focusMode = 0; alice.setMotorPosition(pos) }
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Depth numeric readout (no video feed)
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: cmpDepthCol.implicitHeight + 20; color: Theme.bg
+                ColumnLayout {
+                    id: cmpDepthCol; anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                    SectionHeader { text: "DEPTH" }
+                    Text {
+                        text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + " m" : "—"
+                        font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(36); font.weight: Font.Bold
+                        color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                    Text {
+                        text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "% confidence"
+                        font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); color: Theme.textSecondary
+                        Layout.alignment: Qt.AlignHCenter
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Focus mode indicator
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: 40; color: Theme.bg
+                Text {
+                    anchors.centerIn: parent
+                    text: alice && alice.activelyFocusing ? ["MF", "AF-S", "AF-C", "AF-F"][alice.focusMode] : ["MF", "AF-S", "AF-C", "AF-F"][alice ? alice.focusMode : 0]
+                    font.family: Theme.fontFamilyMono; font.pixelSize: 13; font.weight: Font.DemiBold
+                    color: alice && alice.activelyFocusing ? Theme.success : Theme.textPrimary
+                }
+            }
+
+            Item { Layout.fillHeight: true }
+        }
+    }
+
+    // Standard mode right sidebar content
+    Component {
+        id: standardRightComponent
+
+        ColumnLayout {
+            spacing: 0
+
+            // Motor — content-driven height
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.preferredHeight: stdMotorCol.implicitHeight + Theme.dp(40)
+                Layout.maximumHeight: Layout.preferredHeight
+                color: Theme.bg
+                ColumnLayout {
+                    id: stdMotorCol; anchors.fill: parent
+                    anchors.leftMargin: Theme.dp(24); anchors.rightMargin: Theme.dp(24)
+                    anchors.topMargin: Theme.dp(20); anchors.bottomMargin: Theme.dp(16)
+                    spacing: Theme.dp(12)
+                    SectionHeader { text: "MOTOR POSITION" }
+                    MotorSlider {
+                        Layout.fillWidth: true; motorPos: alice ? alice.motorPosition : 0
+                        enabled: alice ? alice.motorConnected : false
+                        onMotorMoved: (pos) => { if (!alice) return; alice.focusMode = 0; alice.setMotorPosition(pos) }
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Depth feed — max height capped to avoid wasted space beyond 16:9 fill
+            Item {
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: Theme.dp(240)
+                Layout.minimumHeight: Theme.dp(120)
+                Layout.maximumHeight: Theme.dp(346)
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                    RowLayout {
+                        SectionHeader { text: "DEPTH"; Layout.fillWidth: true }
+                        Row {
+                            spacing: Theme.dp(6)
+                            Text {
+                                text: alice && alice.depth > 0 ? alice.depth.toFixed(2) + "m" : "—"
+                                font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(22); font.weight: Font.Bold
+                                color: alice && alice.depthConfidence > 0.7 ? Theme.success : Theme.warning
+                            }
+                            Text {
+                                id: confText1
+                                visible: alice ? alice.depth > 0 : false
+                                text: Math.round((alice ? alice.depthConfidence : 0) * 100) + "%"
+                                font.family: Theme.fontFamilyMono; font.pixelSize: Theme.dp(18); font.weight: Font.Normal
+                                color: Theme.textSecondary
+                                anchors.baseline: parent.children[0].baseline
+                            }
+                        }
+                    }
+                    Item {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        Rectangle {
+                            id: stdDepthRect
+                            anchors.fill: parent; color: Theme.well; radius: Theme.radiusSm
+
+                            property real vidAspect: 16.0 / 9.0
+                            property real fitW: Math.min(width, height * vidAspect)
+                            property real fitH: fitW / vidAspect
+                            property real vidX: (width - fitW) / 2
+                            property real vidY: (height - fitH) / 2
+
+                            VideoRenderer {
+                                x: stdDepthRect.vidX; y: stdDepthRect.vidY
+                                width: stdDepthRect.fitW; height: stdDepthRect.fitH
+                                source: alice ? alice.colorFrame : null; visible: alice ? alice.realSenseConnected : false
+                            }
+                            // Crosshair — double-stroke reticle for visibility on any background
+                            Item {
+                                property real normX: Math.max(0, Math.min(1, alice ? alice.measureX : 0.5))
+                                property real normY: Math.max(0, Math.min(1, alice ? alice.measureY : 0.5))
+                                property real cx: stdDepthRect.vidX + normX * stdDepthRect.fitW
+                                property real cy: stdDepthRect.vidY + normY * stdDepthRect.fitH
+                                x: cx - 12; y: cy - 12
+                                width: 24; height: 24; visible: alice ? alice.realSenseConnected : false
+
+                                // Dark outline (3px wide, behind)
+                                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 24; height: 3; color: "#000000"; opacity: 0.6 }
+                                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 3; height: 24; color: "#000000"; opacity: 0.6 }
+                                // Bright inner (1px, on top)
+                                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 22; height: 1; color: "#ffffff" }
+                                Rectangle { anchors.horizontalCenter: parent.horizontalCenter; anchors.verticalCenter: parent.verticalCenter; width: 1; height: 22; color: "#ffffff" }
+                                // Center ring
+                                Rectangle {
+                                    anchors.centerIn: parent; width: 8; height: 8; radius: 4
+                                    color: "transparent"; border.width: 1.5; border.color: "#ffffff"
+                                }
+                                Rectangle {
+                                    anchors.centerIn: parent; width: 10; height: 10; radius: 5
+                                    color: "transparent"; border.width: 1; border.color: "#000000"; opacity: 0.5
+                                }
+                            }
+                            // Drag area covers full rect but clamps coords to video region
+                            MouseArea {
+                                anchors.fill: parent; cursorShape: Qt.CrossCursor
+                                property bool isDragging: false
+                                onPressed: (mouse) => { isDragging = true; updatePos(mouse.x, mouse.y) }
+                                onPositionChanged: (mouse) => { if (isDragging) updatePos(mouse.x, mouse.y) }
+                                onReleased: isDragging = false
+                                function updatePos(mx, my) {
+                                    if (!alice) return
+                                    var nx = Math.max(0, Math.min(1, (mx - stdDepthRect.vidX) / stdDepthRect.fitW))
+                                    var ny = Math.max(0, Math.min(1, (my - stdDepthRect.vidY) / stdDepthRect.fitH))
+                                    alice.setMeasurementPosition(nx, ny)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Calibration (flex weight ~2 — shorter than depth)
+            Item {
+                id: stdCalibPanel
+                Layout.fillWidth: true; Layout.fillHeight: true; Layout.preferredHeight: 200
+                Layout.minimumHeight: 80
+                ColumnLayout {
+                    anchors.fill: parent; anchors.margins: Theme.dp(20); spacing: Theme.dp(10)
+                    SectionHeader { text: "CALIBRATION" }
+
+                    Text {
+                        text: alice && alice.hasMapping ? alice.mappingName : "No mapping"
+                        font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall; font.weight: Font.DemiBold
+                        color: alice && alice.hasMapping ? Theme.success : Theme.textDisabled
+                    }
+
+                    // Mapping visualization
+                    Rectangle {
+                        Layout.fillWidth: true; Layout.fillHeight: true
+                        color: Theme.well; radius: Theme.radiusSm
+                        visible: stdCalibPanel.height > Theme.dp(260)
+                        MappingPlot { anchors.fill: parent }
+                    }
+
+                    // Preset selector — height matches HTML padding:4px 8px + font:10px at 200% = 40px
+                    Rectangle {
+                        Layout.fillWidth: true; height: Theme.dp(40); radius: Theme.radiusSm
+                        color: Theme.surface; border.width: 1; border.color: Theme.border
+
+                        Text {
+                            anchors.left: parent.left; anchors.leftMargin: Theme.dp(16); anchors.verticalCenter: parent.verticalCenter
+                            text: alice && alice.hasMapping ? alice.mappingName : "Select Preset..."
+                            font.family: Theme.fontFamily; font.pixelSize: Theme.fontSizeSmall
+                            color: alice && alice.hasMapping ? Theme.textPrimary : Theme.textSecondary
+                        }
+                        Text {
+                            anchors.right: parent.right; anchors.rightMargin: Theme.dp(16); anchors.verticalCenter: parent.verticalCenter
+                            text: "\u25BE"; font.pixelSize: Theme.fontSizeMicro; color: Theme.textDisabled
+                        }
+                        MouseArea {
+                            anchors.fill: parent; cursorShape: Qt.PointingHandCursor
+                            onClicked: stdPresetMenu.popup()
+                        }
+                        FileDialog {
+                            id: stdFileDialog
+                            title: "Load Calibration Mapping"
+                            nameFilters: ["JSON files (*.json)", "All files (*)"]
+                            onAccepted: { if (alice) { alice.loadMappingFromFile(selectedFile); stdPresetMenu.currentText = "From file" } }
+                        }
+                        Menu {
+                            id: stdPresetMenu
+                            property string currentText: ""
+                            MenuItem { text: "Select Preset..."; onTriggered: { stdPresetMenu.currentText = ""; if (alice) alice.clearMapping() } }
+                            MenuSeparator {}
+                            MenuItem { text: "Linear"; onTriggered: { stdPresetMenu.currentText = "Linear"; if (alice) alice.loadPreset(0) } }
+                            MenuItem { text: "Logarithmic"; onTriggered: { stdPresetMenu.currentText = "Logarithmic"; if (alice) alice.loadPreset(1) } }
+                            MenuItem { text: "Portrait"; onTriggered: { stdPresetMenu.currentText = "Portrait"; if (alice) alice.loadPreset(2) } }
+                            MenuItem { text: "Landscape"; onTriggered: { stdPresetMenu.currentText = "Landscape"; if (alice) alice.loadPreset(3) } }
+                            MenuItem { text: "Macro"; onTriggered: { stdPresetMenu.currentText = "Macro"; if (alice) alice.loadPreset(4) } }
+                            MenuSeparator {}
+                            MenuItem { text: "From file..."; onTriggered: stdFileDialog.open() }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Wide mode right sidebar content
+    Component {
+        id: wideRightComponent
+
+        ColumnLayout {
+            spacing: 0
+
+            // Telemetry (fixed max)
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: Theme.dp(260)
+                Layout.minimumHeight: Theme.dp(250); Layout.maximumHeight: Theme.dp(280); color: Theme.bg
+                TelemetryGrid { id: telGrid; anchors.fill: parent; anchors.margins: Theme.dp(20) }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // System (fixed max height)
+            Rectangle {
+                Layout.fillWidth: true; Layout.preferredHeight: Theme.dp(160)
+                Layout.maximumHeight: Theme.dp(220); color: Theme.bg
+                SystemMonitorPanel { id: sysPanel; anchors.fill: parent; anchors.margins: Theme.dp(20) }
+            }
+            Rectangle { Layout.fillWidth: true; height: 1; color: Theme.border }
+
+            // Log (fills remaining space)
+            LogDisplay { Layout.fillWidth: true; Layout.fillHeight: true; Layout.minimumHeight: Theme.dp(60); messages: alice ? alice.logMessages : [] }
+        }
+    }
+}

@@ -72,11 +72,11 @@ void HistogramRenderer::paint(QPainter *painter) {
 
     // Background
     painter->setPen(Qt::NoPen);
-    painter->setBrush(QColor(0, 0, 0, 180));
-    painter->drawRoundedRect(QRectF(0, 0, w, h), 4, 4);
+    painter->setBrush(QColor(27, 32, 37, 200));
+    painter->drawRoundedRect(QRectF(0, 0, w, h), 2, 2);
 
     // Grid lines (10%, 50%, 90% brightness marks)
-    painter->setPen(QPen(QColor(255, 255, 255, 30), 0.5));
+    painter->setPen(QPen(QColor(57, 64, 73, 180), 0.5));
     for (float pct : {0.1f, 0.5f, 0.9f}) {
         float x = padding + pct * plotW;
         painter->drawLine(QPointF(x, padding), QPointF(x, padding + plotH));
@@ -136,7 +136,7 @@ void HistogramRenderer::paint(QPainter *painter) {
 
         // Warning triangle icon
         painter->setPen(Qt::NoPen);
-        painter->setBrush(QColor(255, 200, 50, 220));
+        painter->setBrush(QColor(217, 130, 43, 220));
         QPainterPath tri;
         tri.moveTo(indicatorX - 3, indicatorY - 2);
         tri.lineTo(indicatorX + 5, indicatorY - 2);

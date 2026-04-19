@@ -1,4 +1,5 @@
 import QtQuick
+import Alice.UI
 import QtQuick.Controls
 import QtQuick.Controls.Material
 import QtQuick.Layouts
@@ -8,7 +9,7 @@ ColumnLayout {
     property int motorPos: 0
     signal motorMoved(int pos)
 
-    spacing: 4
+    spacing: 0
 
     Slider {
         id: slider
@@ -18,11 +19,10 @@ ColumnLayout {
         stepSize: 1
         value: motorSlider.motorPos
         live: true
-        Material.accent: "#d0bcff"
+        Material.accent: Theme.primary
 
         onMoved: motorSlider.motorMoved(Math.round(value))
 
-        // Mouse wheel for fine adjustment
         MouseArea {
             anchors.fill: parent
             acceptedButtons: Qt.NoButton
@@ -35,56 +35,83 @@ ColumnLayout {
         }
     }
 
+    // Tight gap between slider and numbers
     RowLayout {
         Layout.fillWidth: true
+        Layout.topMargin: Theme.dp(2)
 
         Label {
             text: "0"
-            font.pixelSize: 10
-            color: "#a09da6"
+            font.pixelSize: Theme.dp(18)
+            color: Theme.textSecondary
         }
         Item { Layout.fillWidth: true }
         Label {
             text: Math.round(slider.value).toString()
-            font.family: "RobotoMono"
-            font.pixelSize: 13
+            font.family: Theme.fontFamilyMono
+            font.pixelSize: Theme.dp(24)
             font.weight: Font.Bold
-            color: "#d0bcff"
+            color: Theme.primary
         }
         Item { Layout.fillWidth: true }
         Label {
             text: "4095"
-            font.pixelSize: 10
-            color: "#a09da6"
+            font.pixelSize: Theme.dp(18)
+            color: Theme.textSecondary
         }
     }
 
-    // Quick preset buttons
-    RowLayout {
+    // Larger gap before buttons
+    Item {
         Layout.fillWidth: true
-        spacing: 4
+        implicitHeight: btnRow.height
+        Layout.topMargin: Theme.dp(12)
 
-        Repeater {
-            model: [
-                { label: "1", pos: 0 },
-                { label: "2", pos: 1024 },
-                { label: "3", pos: 2048 },
-                { label: "4", pos: 3072 },
-                { label: "5", pos: 4095 }
-            ]
-            Button {
-                required property var modelData
-                text: modelData.label
-                Layout.fillWidth: true
-                flat: true
-                font.pixelSize: 11
-                implicitHeight: 28
-                onClicked: {
-                    slider.value = modelData.pos
-                    motorSlider.motorMoved(modelData.pos)
+        Row {
+            id: btnRow
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: parent.width
+            spacing: Theme.dp(4)
+
+            Repeater {
+                model: [
+                    { label: "1", pos: 0 },
+                    { label: "2", pos: 1024 },
+                    { label: "3", pos: 2048 },
+                    { label: "4", pos: 3072 },
+                    { label: "5", pos: 4095 }
+                ]
+                Rectangle {
+                    required property var modelData
+                    required property int index
+                    width: (btnRow.width - 4 * btnRow.spacing) / 5
+                    height: Theme.dp(38); radius: Theme.radiusSm
+                    color: presetMa.containsMouse ? Theme.surfaceHover : Theme.surface
+                    border.width: 1; border.color: Theme.border
+
+                    Text {
+                        anchors.centerIn: parent
+                        text: modelData.label
+                        font.family: Theme.fontFamily
+                        font.pixelSize: Theme.dp(18)
+                        color: Theme.textSecondary
+                    }
+
+                    MouseArea {
+                        id: presetMa
+                        anchors.fill: parent
+                        cursorShape: Qt.PointingHandCursor
+                        hoverEnabled: true
+                        onClicked: {
+                            slider.value = modelData.pos
+                            motorSlider.motorMoved(modelData.pos)
+                        }
+                    }
+
+                    ToolTip.text: "Position " + modelData.pos
+                    ToolTip.visible: presetMa.containsMouse
+                    ToolTip.delay: 300
                 }
-                ToolTip.text: "Position " + modelData.pos
-                ToolTip.visible: hovered
             }
         }
     }

@@ -198,14 +198,24 @@ void RealSenseManager::captureLoop() {
         return;
     }
 
+    // Align depth to color so crosshair on RGB maps to correct depth pixel
+    rs2::align alignToColor(RS2_STREAM_COLOR);
+
+    // Frame throttling: skip frames if processing can't keep up
+    int frameCount = 0;
+
     while (running_) {
         try {
             rs2::frameset frames = impl_->pipeline.wait_for_frames(1000);
             if (!running_) break;
+            frameCount++;
 
             // Stamp for main-thread timeout watchdog
             lastFrameTimeMs_ = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
+
+            // Align depth to color (expensive — do every frame for accuracy)
+            try { frames = alignToColor.process(frames); } catch (...) {}
 
             auto depthFrame = frames.get_depth_frame();
             if (depthFrame) {
@@ -213,6 +223,7 @@ void RealSenseManager::captureLoop() {
                 int h = depthFrame.get_height();
                 auto data = reinterpret_cast<const uint16_t *>(depthFrame.get_data());
 
+                // Depth calculation runs every frame (cheap, needed for autofocus)
                 float depth = calculateDepth(data, w, h);
                 if (depth > 0.0f) {
                     depth_ = depth;
@@ -220,16 +231,21 @@ void RealSenseManager::captureLoop() {
                     emit depthChanged(depth, confidence_);
                 }
 
-                QImage depthImage = colorizeDepth(data, w, h);
-                emit depthFrameReady(depthImage);
+                // Depth colormap: only generate every 3rd frame (expensive, visual only)
+                if (frameCount % 3 == 0) {
+                    QImage depthImage = colorizeDepth(data, w, h);
+                    emit depthFrameReady(depthImage);
+                }
             }
 
+            // Color frame: emit every frame but avoid deep copy when possible
             try {
                 auto colorFrame = frames.get_color_frame();
                 if (colorFrame) {
                     int w = colorFrame.get_width();
                     int h = colorFrame.get_height();
                     auto data = reinterpret_cast<const uint8_t *>(colorFrame.get_data());
+                    // Must copy — rs2 frame buffer is reused after this scope
                     QImage img(data, w, h, w * 3, QImage::Format_RGB888);
                     emit colorFrameReady(img.copy());
                 }
